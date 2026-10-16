@@ -1,7 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2.118.0";
 
 const BASE = "https://eurqqiebokwcrrhfbihg.supabase.co/functions/v1/calorie-mcp";
-const PUBLISHABLE_KEY = "sb_publishable_IYwulskgj7ReZdjiyPa63A_pWxKYXn7";
+const CONNECT = "https://davidpersonaltracker.netlify.app/connect.html";
 const MEAL_TYPES = ["Breakfast", "Lunch", "Dinner", "Snack"];
 const COLUMN_KEYS = ["calories", "protein_g", "carbs_g", "fat_g", "fiber_g", "sugar_g", "saturated_fat_g"];
 const MICRO_KEYS = [
@@ -34,7 +34,9 @@ Deno.serve(async (req) => {
   }
   if (route === "/register" && req.method === "POST") return register(req);
   if (route === "/authorize" && req.method === "GET") return authorize(url);
-  if (route === "/callback" && req.method === "GET") return html(callbackPage());
+  if (route === "/callback" && req.method === "GET") {
+    return Response.redirect(`${CONNECT}${url.search}`, 302);
+  }
   if (route === "/mint" && req.method === "POST") return mint(req);
   if (route === "/token" && req.method === "POST") return token(req);
   if ((route === "/" || route === "/mcp") && req.method === "POST") return mcp(req);
@@ -69,8 +71,10 @@ function json(body: unknown, status = 200, extra: HeadersInit = {}): Response {
   }));
 }
 
-function html(body: string): Response {
-  return cors(new Response(body, { headers: { "content-type": "text/html; charset=utf-8" } }));
+function page(message: string): Response {
+  const target = new URL(CONNECT);
+  target.searchParams.set("message", message);
+  return Response.redirect(target.toString(), 302);
 }
 
 function cors(response: Response): Response {
@@ -115,10 +119,10 @@ async function authorize(url: URL): Promise<Response> {
   const method = url.searchParams.get("code_challenge_method") || "";
   const state = url.searchParams.get("state") || "";
   if (!clientId || !allowedRedirect(redirectUri) || !challenge || method !== "S256" || !state) {
-    return html("<p>This connection request is missing a sign-in detail. Close this page and connect again from Claude.</p>");
+    return page("This connection request is missing a sign-in detail. Close this page and connect again from Claude.");
   }
   if (!(await clientAllows(clientId, redirectUri))) {
-    return html("<p>This Claude connection is not recognised. Remove it in Claude and add it again.</p>");
+    return page("This Claude connection is not recognised. Remove it in Claude and add it again.");
   }
   const { data, error } = await admin.from("mcp_requests").insert({
     client_id: clientId,
@@ -127,66 +131,8 @@ async function authorize(url: URL): Promise<Response> {
     state,
     expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
   }).select("id").single();
-  if (error || !data) return html("<p>Could not start sign-in. Close this page and try again.</p>");
-  return Response.redirect(`${BASE}/callback?request=${data.id}`, 302);
-}
-
-function callbackPage(): string {
-  const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "https://eurqqiebokwcrrhfbihg.supabase.co";
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Connect Claude</title></head>
-<body style="font-family:system-ui,sans-serif;padding:24px;max-width:28rem">
-<h1 style="font-size:1.4rem">Connect your email</h1>
-<p id="status">Use the same email you use on the website.</p>
-<form id="email-form" style="display:grid;gap:12px;margin-top:16px">
-<label>Email<br><input id="email" type="email" autocomplete="email" required style="width:100%;padding:12px;margin-top:4px"></label>
-<button id="send" type="submit" style="padding:12px;font-weight:700">Email me a sign-in link</button>
-</form>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-<script>
-const status = document.getElementById("status");
-const form = document.getElementById("email-form");
-const params = new URLSearchParams(location.search);
-const requestId = params.get("request") || sessionStorage.getItem("calorie-request");
-if (requestId) sessionStorage.setItem("calorie-request", requestId);
-const client = window.supabase.createClient(${JSON.stringify(supabaseUrl)}, ${JSON.stringify(PUBLISHABLE_KEY)});
-async function finish(session) {
-  const saved = sessionStorage.getItem("calorie-request");
-  const response = await fetch(${JSON.stringify(`${BASE}/mint`)}, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ access_token: session.access_token, request_id: saved }),
-  });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok || !body.redirect) {
-    status.textContent = body.message || "Could not finish connecting. Close this page and try again from Claude.";
-    return;
-  }
-  sessionStorage.removeItem("calorie-request");
-  location.replace(body.redirect);
-}
-client.auth.getSession().then(async ({ data }) => {
-  if (data.session) {
-    form.hidden = true;
-    status.textContent = "Signing you in…";
-    finish(data.session);
-  }
-});
-form.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const email = document.getElementById("email").value.trim().toLowerCase();
-  const button = document.getElementById("send");
-  button.disabled = true;
-  status.textContent = "Sending the link…";
-  const { error } = await client.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: ${JSON.stringify(`${BASE}/callback`)}, shouldCreateUser: true },
-  });
-  button.disabled = false;
-  status.textContent = error
-    ? "Could not send the email. Check the address and try again."
-    : "Check your inbox and open the link on this device.";
-});
-</script></body></html>`;
+  if (error || !data) return page("Could not start sign-in. Close this page and try again.");
+  return Response.redirect(`${CONNECT}?request=${data.id}`, 302);
 }
 
 async function mint(req: Request): Promise<Response> {

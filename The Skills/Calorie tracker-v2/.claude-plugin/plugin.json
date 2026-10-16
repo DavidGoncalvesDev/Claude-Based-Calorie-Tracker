@@ -1,4 +1,0 @@
-{
-  "name": "calorie-tracker",
-  "description": "Calorie tracker. Use when the user uploads a food photo, says they ate something, or asks for their result. Save each food with the Calorie Tracker connector. Do not assume a diet. The goal comes from their account."
-}
