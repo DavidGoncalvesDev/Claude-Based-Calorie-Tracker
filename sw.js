@@ -1,4 +1,4 @@
-const CACHE = "david-tracker-shell-v4";
+const CACHE = "david-tracker-shell-v5";
 const SHELL = [
   "./",
   "./index.html",
