@@ -1662,9 +1662,9 @@
       <form class="card login-card" data-form="sign-in" autocomplete="on">
         <img class="logo" src="icons/Logo.png" alt="" width="40" height="40">
         <h1>Tracker</h1>
-        <p>Enter your email. Food photos stay in your own Claude chat. This site shows the meals that chat saved for you.</p>
+        <p>Enter the email for your account. This site shows the meals Claude saved for that address.</p>
         <label class="field"><span>Email</span><input name="email" type="email" autocomplete="email" required value="${esc(state.linkSent)}"></label>
-        <button type="submit" class="primary"${state.signingIn ? " disabled" : ""}>${state.signingIn ? "Sending…" : "Email me a sign-in link"}</button>
+        <button type="submit" class="primary"${state.signingIn ? " disabled" : ""}>${state.signingIn ? "One moment…" : "Continue"}</button>
         ${sent}
         ${state.authError ? `<p class="error" role="alert">${esc(state.authError)}</p>` : ""}
       </form>
