@@ -1,6 +1,6 @@
 # David Tracker
 
-A personal website for your meals. It shows every meal saved in Supabase, including meals Claude saved from a photo, and it lets you add, edit or delete food yourself. There is no login. It works in a phone browser and on a computer, and you can put it on your phone's home screen.
+A website for your meals. Each person signs in with their email and sees only the meals on their account, including meals their own Claude chat saved from a photo. It works in a phone browser and on a computer, and you can put it on your phone's home screen.
 
 The site does not look at photos and it does not store photos. Keep sending food photos to Claude. Claude saves the estimate, and this site is where you check and correct it.
 
@@ -18,9 +18,7 @@ There is no build step. The pages are the files themselves. `npm start` only ope
 
 ## Before you use it
 
-Nothing to create. Open the site and today's meals are there. The breakfast already saved for **16 October 2026** (toasted bread, peanut butter, and lactose-free milk, about **750 kcal**, around 11:26 Lisbon time) should show on that day.
-
-One thing to know: there is no password. Anyone who has the website address can see and change the meals. That is the simple version, because Claude saves food straight into the database and not through a login. Do not put the secret `service_role` key in these files.
+Open the site and enter your email. Use `daviddionisiogoncalves2@gmail.com` for the meals already saved, including breakfast on **16 October 2026**. Open the link in that inbox on the same device. Do not put the secret `service_role` key in these files.
 
 ## Put the site on the internet (free)
 
@@ -54,14 +52,16 @@ The icon is the steak picture, kept as a PNG with a transparent background. Afte
 
 ## How to use it
 
-- **Day** is today in Lisbon. Use the arrows or the date to look at another day. **Today** jumps back.
-- The ring is calories eaten against a goal of 3,000 kcal. It turns red above 105% of the goal.
-- Protein is blue, carbs are amber, fat is pink. Green means you are close to a goal (90% or more). Amber is halfway. Orange is under halfway. Sugar, saturated fat and sodium stay green until you go over the limit, then they turn red.
+- **Day** is today in Lisbon. Use the arrows or the date to look at another day. **Today** jumps back. The name and the steak icon in the corner also jump back to the day you were looking at.
+- The ring is calories eaten against the goal. The ring is orange, and it turns red above 105% of the goal.
+- Protein stays blue, carbs stay amber, and fat stays pink, however full the bar is. Fiber, sugar, saturated fat, vitamins and minerals still change colour with progress: green means you are close to a goal (90% or more), amber is halfway, orange is under halfway. Sugar, saturated fat and sodium stay green until you go over the limit, then they turn red.
+- Vitamins and minerals sit above the meals. Meals are newest first.
 - Tap a food to correct it. **Delete food** asks you first.
 - On a meal, the dropdown changes Breakfast, Lunch, Dinner or Snack for the whole meal. **Change time** moves the whole meal. **Delete meal** removes every food in it, after you confirm.
 - **Add** logs food yourself. The meal type starts from the time: before 11:00 breakfast, until 15:30 lunch, until 18:30 snack, then dinner. You can add several foods to one meal, or add a food to a meal that is already there.
 - Foods you have typed before appear under **Recent** on this phone or computer, so you can tap them again.
 - **Week** and **Month** show calories and macros for the days that actually have food. A week with three logged days uses those three days, not seven empty ones. Use the arrows to look at an earlier week or month.
+- **Weight** is where you log kilograms. One weight per day: saving the same day again replaces it. The line shows how that weight has moved, and **Delete** removes a day after you confirm.
 - The sliders icon opens **Definitions**, where you set the calorie goal, how protein, carbs and fat share those calories, and the colour of the site.
 
 ## Change the daily goals
@@ -72,7 +72,7 @@ Open the site and tap the sliders icon. That page is called Definitions.
 - **Macro split** is how those calories are shared between protein, carbs and fat. The three percentages need to add up to 100. The site turns them into grams for you.
 - **Colours** has five looks: Light, Dark, Dark blue, Dark green and Warm. Pick one and the whole site changes.
 
-These choices stay on this phone or computer. They are ordinary goals, not medical advice.
+The calorie goal is saved on the email account. Colours stay on this phone or computer. These are ordinary goals, not medical advice.
 
 If Netlify is connected to GitHub, the site updates itself a minute or two after the new file is on GitHub. Refresh the page. If the phone still shows the old page, close the home-screen app and open it again.
 
@@ -83,4 +83,4 @@ If Netlify is connected to GitHub, the site updates itself a minute or two after
 
 ## What stays out of the files
 
-Never paste the secret `service_role` key, or the database password, into these files. The key already in `app.js` is the public one, and it is supposed to be there. Because there is no login, that public key can read and change the meals. Keep the website address to yourself if you do not want other people looking at the log.
+Never paste the secret `service_role` key, or the database password, into these files. The key already in `app.js` is the public one, and it is supposed to be there. Meals are readable only by the signed-in account.

@@ -10,11 +10,11 @@
   const GOALS_KEY = "calorie-tracker-goals";
   const RECENT_KEY = "calorie-tracker-recent";
   const THEMES = [
-    { id: "light", label: "Light", color: "#f6f5f2" },
-    { id: "dark", label: "Dark", color: "#121212" },
-    { id: "blue", label: "Dark blue", color: "#0b1220" },
-    { id: "green", label: "Dark green", color: "#0c1410" },
-    { id: "warm", label: "Warm", color: "#1a1410" },
+    { id: "light", label: "Light", color: "#f6f5f2", swatch: "#f6f5f2" },
+    { id: "dark", label: "Dark", color: "#121212", swatch: "#5c5c5c" },
+    { id: "blue", label: "Dark blue", color: "#0b1220", swatch: "#60a5fa" },
+    { id: "green", label: "Dark green", color: "#0c1410", swatch: "#34d399" },
+    { id: "warm", label: "Warm", color: "#1a1410", swatch: "#f0a36b" },
   ];
   const DEFAULT_GOALS = { calories: 3000, protein: 24, carbs: 46, fat: 30 };
   const MEAL_TYPES = ["Breakfast", "Lunch", "Dinner", "Snack"];
@@ -50,6 +50,7 @@
     day: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 8v4l2.5 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
     week: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17l5-5 3.2 3.2L20 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     month: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4 9h16M8 3.5v3M16 3.5v3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+    weight: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8.2h8M12 8.2V12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><rect x="4.5" y="12" width="15" height="7.2" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>',
     add: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
     gear: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="7" r="2.2" fill="var(--bg)" stroke="currentColor" stroke-width="1.8"/><circle cx="16" cy="12" r="2.2" fill="var(--bg)" stroke="currentColor" stroke-width="1.8"/><circle cx="10" cy="17" r="2.2" fill="var(--bg)" stroke="currentColor" stroke-width="1.8"/></svg>',
     sun: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M5 5l1.8 1.8M17.2 17.2 19 19M19 5l-1.8 1.8M6.8 17.2 5 19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
@@ -74,6 +75,11 @@
     mealTimeGroup: "",
     confirm: null,
     saving: false,
+    session: null,
+    profile: null,
+    authError: "",
+    signingIn: false,
+    linkSent: "",
     period: {
       kind: "week",
       anchor: "",
@@ -81,12 +87,19 @@
       loading: false,
       error: "",
     },
+    weight: {
+      entries: [],
+      loading: false,
+      error: "",
+      loaded: false,
+    },
   };
 
   let client = null;
   let charts = [];
   let dayToken = 0;
   let trendToken = 0;
+  let weightToken = 0;
   let addMealToken = 0;
   let toastTimer = 0;
   let paintedView = "";
@@ -98,7 +111,7 @@
 
   try {
     client = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
-      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
     });
   } catch {
     root.innerHTML = '<p class="boot">Could not start sign-in. Check your connection and refresh.</p>';
@@ -113,6 +126,27 @@
 
   function isUuid(value) {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
+  }
+
+  function userId() {
+    const id = state.session?.user?.id || "";
+    return isUuid(id) ? id : "";
+  }
+
+  function displayNameFrom(user) {
+    const meta = user?.user_metadata || {};
+    const raw = meta.full_name || meta.name || String(user?.email || "").split("@")[0] || "Me";
+    return String(raw).trim().slice(0, 80) || "Me";
+  }
+
+  function firstName() {
+    const name = state.profile?.display_name || displayNameFrom(state.session?.user);
+    return name.split(/\s+/)[0] || "Tracker";
+  }
+
+  function recentStorageKey() {
+    const id = userId();
+    return id ? `${RECENT_KEY}:${id}` : RECENT_KEY;
   }
 
   function num(value) {
@@ -157,6 +191,18 @@
   }
 
   function goals() {
+    const profile = state.profile;
+    if (profile) {
+      const calories = Number(profile.calorie_goal);
+      const protein = Number(profile.protein_pct);
+      const carbs = Number(profile.carbs_pct);
+      const fat = Number(profile.fat_pct);
+      if (calories > 0 && protein >= 0 && carbs >= 0 && fat >= 0) return { calories, protein, carbs, fat };
+    }
+    return { ...DEFAULT_GOALS };
+  }
+
+  function deviceGoals() {
     try {
       const saved = JSON.parse(localStorage.getItem(GOALS_KEY) || "null");
       const calories = Number(saved?.calories);
@@ -164,8 +210,8 @@
       const carbs = Number(saved?.carbs);
       const fat = Number(saved?.fat);
       if (calories > 0 && protein >= 0 && carbs >= 0 && fat >= 0) return { calories, protein, carbs, fat };
-    } catch { /* keep the defaults */ }
-    return { ...DEFAULT_GOALS };
+    } catch { /* this phone has no saved goals */ }
+    return null;
   }
 
   function macroGrams(goal = goals()) {
@@ -365,7 +411,8 @@
       meal_name: rows[0].meal_name,
       eaten_at: rows.map((row) => row.eaten_at).sort()[0],
       items: rows,
-    })).sort((a, b) => String(a.eaten_at).localeCompare(String(b.eaten_at)));
+      created_at: rows.map((row) => row.created_at || "").sort().at(-1) || "",
+    })).sort((a, b) => String(b.eaten_at).localeCompare(String(a.eaten_at)) || String(b.created_at).localeCompare(String(a.created_at)));
   }
 
   function bucket(items, days) {
@@ -419,17 +466,21 @@
   }
 
   function setTitle() {
-    const names = { week: "Week", month: "Month", add: "Add food", definitions: "Definitions", edit: "Edit food" };
-    document.title = `${names[state.view] || formatShort(state.dateKey)} · David Tracker`;
+    const names = { week: "Week", month: "Month", weight: "Weight", add: "Add food", definitions: "Definitions", edit: "Edit food" };
+    const who = state.session ? firstName() : "Tracker";
+    document.title = `${names[state.view] || formatShort(state.dateKey) || "Sign in"} · ${who}`;
   }
 
   async function fetchAll(startISO, endISO) {
+    const uid = userId();
+    if (!uid) throw new Error("not authenticated");
     const pageSize = 1000;
     const all = [];
     for (let from = 0; from < 20000; from += pageSize) {
       const { data, error } = await client
         .from("food_items")
         .select("*")
+        .eq("user_id", uid)
         .gte("eaten_at", startISO)
         .lt("eaten_at", endISO)
         .order("eaten_at", { ascending: true })
@@ -562,7 +613,7 @@
     return value || fallback;
   }
 
-  function chartOptions(stacked) {
+  function chartOptions(stacked, fromZero = true) {
     const text = cssVar("--muted", "#57534e");
     const grid = cssVar("--line", "#e6dfd2");
     return {
@@ -575,13 +626,45 @@
       },
       scales: {
         x: { stacked, ticks: { color: text, maxRotation: 0, autoSkip: true }, grid: { display: false } },
-        y: { stacked, beginAtZero: true, ticks: { color: text }, grid: { color: grid } },
+        y: { stacked, beginAtZero: fromZero, grace: fromZero ? 0 : "12%", ticks: { color: text }, grid: { color: grid } },
       },
     };
   }
 
+  function mountWeightChart() {
+    if (state.weight.loading || state.weight.error || !window.Chart) return;
+    const canvas = document.getElementById("chart-weight");
+    const entries = [...state.weight.entries].sort((a, b) => String(a.weighed_on).localeCompare(String(b.weighed_on)));
+    if (!canvas || !entries.length) return;
+    const color = cssVar("--kcal", "#f25c2c");
+    const options = chartOptions(false, false);
+    options.plugins.legend.display = false;
+    options.plugins.tooltip.callbacks.label = (ctx) => `${fmtAmount(ctx.parsed.y)} kg`;
+    charts.push(new window.Chart(canvas, {
+      type: "line",
+      data: {
+        labels: entries.map((entry) => formatChartLabel(entry.weighed_on)),
+        datasets: [{
+          label: "Weight",
+          data: entries.map((entry) => entry.weight_kg),
+          borderColor: color,
+          backgroundColor: "rgba(242, 92, 44, 0.18)",
+          pointBackgroundColor: color,
+          tension: 0.25,
+          pointRadius: entries.length > 40 ? 0 : 4,
+          fill: true,
+        }],
+      },
+      options,
+    }));
+  }
+
   function mountCharts() {
     destroyCharts();
+    if (state.view === "weight") {
+      mountWeightChart();
+      return;
+    }
     if ((state.view !== "week" && state.view !== "month") || state.period.loading || state.period.error || !window.Chart) return;
     const used = loggedDays(state.period.items);
     if (!used.length) return;
@@ -636,7 +719,7 @@
     const width = Math.max(0, Math.min(percent, 100));
     return `<div class="nutrient">
       <div class="nutrient-label"><span>${DOT[key] ? `<i class="swatch ${DOT[key]}" aria-hidden="true"></i> ` : ""}${esc(meta.label)}</span><span class="num">${esc(fmtAmount(value))} / ${esc(key === "calories" ? fmtInt(meta.target) : fmtAmount(meta.target))} ${esc(meta.unit)}</span></div>
-      <div class="track" role="meter" aria-label="${esc(meta.label)}" aria-valuemin="0" aria-valuemax="${meta.target}" aria-valuenow="${Math.round(value)}"><span class="${toneFor(percent, meta.type)}" style="width:${width}%"></span></div>
+      <div class="track" role="meter" aria-label="${esc(meta.label)}" aria-valuemin="0" aria-valuemax="${meta.target}" aria-valuenow="${Math.round(value)}"><span class="${DOT[key] || toneFor(percent, meta.type)}" style="width:${width}%"></span></div>
     </div>`;
   }
 
@@ -752,8 +835,8 @@
         <section class="card"><h2>Protein, carbs and fat</h2>${barHtml("protein_g")}${barHtml("carbs_g")}${barHtml("fat_g")}${splitHtml()}</section>
       </div>
       <section class="card"><h2>Fiber and limits</h2>${barHtml("fiber_g")}${barHtml("sugar_g")}${barHtml("saturated_fat_g")}</section>
-      ${mealBlock}
-      <details class="card micros"><summary>Vitamins and minerals</summary>${knownMicroKeys().map(barHtml).join("")}</details>`;
+      <details class="card micros"><summary>Vitamins and minerals</summary>${knownMicroKeys().map(barHtml).join("")}</details>
+      ${mealBlock}`;
   }
 
   function field(label, name, value, inputmode) {
@@ -906,6 +989,131 @@
       </section>`;
   }
 
+  function signedKg(diff) {
+    const rounded = Math.round(diff * 10) / 10;
+    if (rounded > 0) return `+${fmtAmount(rounded)} kg`;
+    if (rounded < 0) return `−${fmtAmount(Math.abs(rounded))} kg`;
+    return "0 kg";
+  }
+
+  function weightHtml() {
+    const entries = [...state.weight.entries].sort((a, b) => String(b.weighed_on).localeCompare(String(a.weighed_on)));
+    const today = todayKey();
+    const todayEntry = state.weight.entries.find((entry) => entry.weighed_on === today);
+    const ordered = [...state.weight.entries].sort((a, b) => String(a.weighed_on).localeCompare(String(b.weighed_on)));
+    const latest = ordered[ordered.length - 1];
+    const previous = ordered.length > 1 ? ordered[ordered.length - 2] : null;
+    const first = ordered[0];
+    const stats = latest ? `<section class="stats">
+      <article class="card stat"><span>Latest</span><strong class="num">${esc(fmtAmount(latest.weight_kg))} kg</strong><span>${esc(formatTableDate(latest.weighed_on))}</span></article>
+      ${previous ? `<article class="card stat"><span>Since last</span><strong class="num">${esc(signedKg(latest.weight_kg - previous.weight_kg))}</strong><span>${esc(formatShort(previous.weighed_on))}</span></article>` : ""}
+      ${first && first !== latest ? `<article class="card stat"><span>Since first</span><strong class="num">${esc(signedKg(latest.weight_kg - first.weight_kg))}</strong><span>${esc(formatShort(first.weighed_on))}</span></article>` : ""}
+    </section>` : "";
+    const form = `<form class="card stack" data-form="weight" autocomplete="off">
+      <h2>Log weight</h2>
+      <div class="pair">
+        <label class="field"><span>Date</span><input type="date" name="weighed_on" max="${esc(today)}" value="${esc(today)}"></label>
+        <label class="field"><span>Kilograms</span><input name="weight_kg" type="text" inputmode="decimal" autocomplete="off" value="${esc(todayEntry ? displayNumber(todayEntry.weight_kg) : "")}" placeholder="74.2"></label>
+      </div>
+      <p class="hint">Saving the same day again replaces that weight.</p>
+      <p class="form-error" role="alert"></p>
+      <button type="submit" class="primary">Save weight</button>
+    </form>`;
+    if (state.weight.loading && !state.weight.loaded) return `<h1>Weight</h1>${form}<p class="hint">Loading weight…</p>`;
+    if (state.weight.error && !entries.length) return `<h1>Weight</h1>${form}<p class="error" role="alert">${esc(state.weight.error)}</p><button type="button" class="secondary" data-action="reload-weight">Try again</button>`;
+    const chart = entries.length
+      ? (window.Chart
+        ? `<section class="card chart-card"><h2>How it has changed</h2><div class="chart-box"><canvas id="chart-weight"></canvas></div></section>`
+        : `<p class="error">Could not load the chart. Check your connection and refresh.</p>`)
+      : `<section class="card empty"><h2>No weight yet</h2><p>Log a weight and the line will show up here.</p></section>`;
+    const rows = entries.map((entry) => `<div class="weight-row">
+      <span>${esc(formatTableDate(entry.weighed_on))}</span>
+      <strong class="num">${esc(fmtAmount(entry.weight_kg))} kg</strong>
+      <button type="button" class="danger-text" data-action="ask-delete-weight" data-id="${esc(entry.id)}">Delete</button>
+    </div>`).join("");
+    const list = entries.length ? `<section class="card"><h2>Log</h2><div class="weight-list">${rows}</div></section>` : "";
+    const error = state.weight.error ? `<p class="error" role="alert">${esc(state.weight.error)}</p>` : "";
+    return `<h1>Weight</h1>${error}${form}${stats}${chart}${list}`;
+  }
+
+  async function loadWeight() {
+    const token = ++weightToken;
+    state.view = "weight";
+    if (!state.weight.loaded) {
+      state.weight.loading = true;
+      state.weight.error = "";
+      render();
+    }
+    try {
+      const uid = userId();
+      if (!uid) throw new Error("not authenticated");
+      const { data, error } = await client
+        .from("weight_logs")
+        .select("id, weighed_on, weight_kg")
+        .eq("user_id", uid)
+        .order("weighed_on", { ascending: true });
+      if (token !== weightToken) return;
+      if (error) throw error;
+      state.weight.entries = (data || []).map((row) => ({
+        id: row.id,
+        weighed_on: row.weighed_on,
+        weight_kg: Number(row.weight_kg),
+      })).filter((row) => isUuid(row.id) && /^\d{4}-\d{2}-\d{2}$/.test(row.weighed_on) && Number.isFinite(row.weight_kg));
+      state.weight.loaded = true;
+      state.weight.error = "";
+    } catch (error) {
+      if (token !== weightToken) return;
+      state.weight.error = friendlyError(error, "Could not load your weight. Check your connection and try again.");
+    } finally {
+      if (token === weightToken) {
+        state.weight.loading = false;
+        render();
+      }
+    }
+  }
+
+  async function submitWeight(form) {
+    const button = form.querySelector('button[type="submit"]');
+    const dateKey = form.weighed_on.value;
+    const parsed = parseOptionalNumber(form.weight_kg.value);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey) || dateKey > todayKey()) return failForm(form, null, "", "Choose today or an earlier day.");
+    if (parsed == null || Number.isNaN(parsed) || parsed <= 0 || parsed >= 500) return failForm(form, null, "", "Enter a weight in kilograms.");
+    const kg = Math.round(parsed * 100) / 100;
+    const uid = userId();
+    if (!uid) return failForm(form, null, "", "Sign in again, then save this weight.");
+    button.disabled = true;
+    button.textContent = "Saving…";
+    try {
+      const { data, error } = await client
+        .from("weight_logs")
+        .upsert({ user_id: uid, weighed_on: dateKey, weight_kg: kg }, { onConflict: "user_id,weighed_on" })
+        .select("id, weighed_on, weight_kg");
+      if (error || !data || data.length !== 1) {
+        failForm(form, button, "Save weight", friendlyError(error, "Could not save that weight. Check your connection and try again."));
+        return;
+      }
+      const saved = { id: data[0].id, weighed_on: data[0].weighed_on, weight_kg: Number(data[0].weight_kg) };
+      const index = state.weight.entries.findIndex((entry) => entry.weighed_on === saved.weighed_on || entry.id === saved.id);
+      if (index >= 0) state.weight.entries[index] = saved;
+      else state.weight.entries.push(saved);
+      state.weight.loaded = true;
+      state.weight.error = "";
+      flash("Weight saved");
+      render();
+    } catch (error) {
+      failForm(form, button, "Save weight", friendlyError(error, "Could not save that weight. Check your connection and try again."));
+    }
+  }
+
+  async function deleteWeight(id) {
+    const uid = userId();
+    if (!isUuid(id) || !uid) return "Could not delete that weight.";
+    const { data, error } = await client.from("weight_logs").delete().eq("id", id).eq("user_id", uid).select("id");
+    if (error || !data || data.length !== 1) return friendlyError(error, "Could not delete that weight. Check your connection and try again.");
+    state.weight.entries = state.weight.entries.filter((entry) => entry.id !== id);
+    return "";
+  }
+
   function goalPreviewHtml(goal) {
     const grams = macroGrams(goal);
     const sum = goal.protein + goal.carbs + goal.fat;
@@ -920,7 +1128,7 @@
 
   function definitionsHtml() {
     const goal = goals();
-    const choices = THEMES.map((theme) => `<button type="button" data-action="theme" data-theme-choice="${theme.id}" aria-pressed="${normalizeTheme(state.theme) === theme.id}"><i class="theme-dot" style="background:${theme.color}"></i>${esc(theme.label)}</button>`).join("");
+    const choices = THEMES.map((theme) => `<button type="button" data-action="theme" data-theme-choice="${theme.id}" aria-pressed="${normalizeTheme(state.theme) === theme.id}"><i class="theme-dot" style="background:${theme.swatch}"></i>${esc(theme.label)}</button>`).join("");
     return `<form id="goals-form" class="stack" data-form="goals" autocomplete="off">
       <h1>Definitions</h1>
       <section class="card stack">
@@ -942,7 +1150,7 @@
         <div class="themes" role="group" aria-label="Colours">${choices}</div>
       </section>
       <section class="card stack">
-        <p class="hint">Days follow the clock in Lisbon. Photos are not stored here. Every meal in the database shows up here, including meals Claude saved.</p>
+        <p class="hint">Days follow the clock in Lisbon. Photos stay in your Claude chat. This site shows the meals that chat saved for your email.</p>
       </section>
     </form>`;
   }
@@ -969,9 +1177,10 @@
   function shell(content) {
     return `<div class="app-shell"${state.confirm ? " inert" : ""}>
       <header class="top"><div class="top-inner">
-        <div class="brand"><img class="logo" src="icons/Logo.png" alt="" width="40" height="40">David Tracker</div>
-        <nav class="tabbar" aria-label="Main">${tab("day", "Day", ICONS.day)}${tab("week", "Week", ICONS.week)}${tab("month", "Month", ICONS.month)}</nav>
+        <button type="button" class="brand" data-action="nav" data-view="day"><img class="logo" src="icons/Logo.png" alt="" width="40" height="40"><span class="brand-name">${esc(firstName())}</span></button>
+        <nav class="tabbar" aria-label="Main">${tab("day", "Day", ICONS.day)}${tab("week", "Week", ICONS.week)}${tab("month", "Month", ICONS.month)}${tab("weight", "Weight", ICONS.weight)}</nav>
         <div class="header-actions">
+          <button type="button" class="text-btn" data-action="sign-out">Sign out</button>
           <button type="button" class="icon-btn" data-action="nav" data-view="definitions" aria-label="Definitions"${state.view === "definitions" ? ' aria-current="page"' : ""}>${ICONS.gear}</button>
         </div>
       </div></header>
@@ -983,6 +1192,7 @@
 
   function viewHtml() {
     if (state.view === "week" || state.view === "month") return window.Chart ? periodHtml() : '<p class="error">Could not load the charts. Check your connection and refresh.</p>';
+    if (state.view === "weight") return weightHtml();
     if (state.view === "add") return addHtml();
     if (state.view === "edit") return editHtml();
     if (state.view === "definitions") return definitionsHtml();
@@ -994,6 +1204,11 @@
     setTitle();
     if (state.booting) {
       root.innerHTML = '<p class="boot">Loading…</p>';
+      return;
+    }
+    if (!state.session) {
+      root.innerHTML = loginHtml();
+      paintedView = "login";
       return;
     }
     root.innerHTML = shell(viewHtml());
@@ -1049,8 +1264,9 @@
   }
 
   async function deleteItem(id) {
-    if (!isUuid(id)) return "Could not delete that food.";
-    const { data, error } = await client.from("food_items").delete().eq("id", id).select("id");
+    const uid = userId();
+    if (!isUuid(id) || !uid) return "Could not delete that food.";
+    const { data, error } = await client.from("food_items").delete().eq("id", id).eq("user_id", uid).select("id");
     if (error || !data || data.length !== 1) return friendlyError(error, "Could not delete that food. Check your connection and try again.");
     state.items = state.items.filter((item) => item.id !== id);
     if (state.editingId === id) {
@@ -1061,8 +1277,9 @@
   }
 
   async function deleteMeal(groupId) {
-    if (!isUuid(groupId)) return "Could not delete that meal.";
-    const { data, error } = await client.from("food_items").delete().eq("meal_group_id", groupId).select("id");
+    const uid = userId();
+    if (!isUuid(groupId) || !uid) return "Could not delete that meal.";
+    const { data, error } = await client.from("food_items").delete().eq("meal_group_id", groupId).eq("user_id", uid).select("id");
     if (error || !data || !data.length) return friendlyError(error, "Could not delete that meal. Check your connection and try again.");
     state.items = state.items.filter((item) => item.meal_group_id !== groupId);
     state.mealTimeGroup = "";
@@ -1072,10 +1289,11 @@
   async function saveMealType(select) {
     const groupId = select.dataset.group;
     const mealName = select.value;
-    if (!isUuid(groupId) || !mealName) return;
+    const uid = userId();
+    if (!isUuid(groupId) || !mealName || !uid) return;
     select.disabled = true;
     try {
-      const { data, error } = await client.from("food_items").update({ meal_name: mealName }).eq("meal_group_id", groupId).select("id");
+      const { data, error } = await client.from("food_items").update({ meal_name: mealName }).eq("meal_group_id", groupId).eq("user_id", uid).select("id");
       if (error || !data || !data.length) {
         state.error = friendlyError(error, "Could not change that meal. Check your connection and try again.");
         render();
@@ -1096,7 +1314,8 @@
     const card = button.closest(".meal");
     const dateKey = card?.querySelector('[name="meal_date"]')?.value || "";
     const time = card?.querySelector('[name="meal_time"]')?.value || "";
-    if (!isUuid(groupId)) return;
+    const uid = userId();
+    if (!isUuid(groupId) || !uid) return;
     const when = lisbonWallToUtc(dateKey, withSeconds(time));
     if (!when) {
       state.error = "That time does not exist in Lisbon (the clocks skip forward). Choose another time.";
@@ -1106,7 +1325,7 @@
     button.disabled = true;
     const iso = when.toISOString();
     try {
-      const { data, error } = await client.from("food_items").update({ eaten_at: iso }).eq("meal_group_id", groupId).select("id");
+      const { data, error } = await client.from("food_items").update({ eaten_at: iso }).eq("meal_group_id", groupId).eq("user_id", uid).select("id");
       if (error || !data || !data.length) {
         state.error = friendlyError(error, "Could not change the time. Check your connection and try again.");
         render();
@@ -1201,7 +1420,7 @@
 
   function readRecent() {
     try {
-      const parsed = JSON.parse(localStorage.getItem(RECENT_KEY) || "[]");
+      const parsed = JSON.parse(localStorage.getItem(recentStorageKey()) || "[]");
       if (!Array.isArray(parsed)) return [];
       return parsed.map(sanitizeRecent).filter(Boolean).slice(0, 10);
     } catch {
@@ -1233,7 +1452,7 @@
       if (index >= 0) recent.splice(index, 1);
       recent.unshift(saved);
     }
-    try { localStorage.setItem(RECENT_KEY, JSON.stringify(recent.slice(0, 10))); } catch { /* ignore */ }
+    try { localStorage.setItem(recentStorageKey(), JSON.stringify(recent.slice(0, 10))); } catch { /* ignore */ }
   }
 
   function useRecent(index) {
@@ -1325,7 +1544,9 @@
       mealGroupId = crypto.randomUUID();
       eatenAt = when.toISOString();
     }
-    const rows = parsed.items.map((item) => ({ ...item, meal_group_id: mealGroupId, eaten_at: eatenAt, meal_name: mealName }));
+    const uid = userId();
+    if (!uid) return failForm(form, null, "", "Sign in again, then save this meal.");
+    const rows = parsed.items.map((item) => ({ ...item, user_id: uid, meal_group_id: mealGroupId, eaten_at: eatenAt, meal_name: mealName }));
     button.disabled = true;
     button.textContent = "Saving…";
     try {
@@ -1348,13 +1569,14 @@
     const button = form.querySelector('button[type="submit"]');
     const id = state.editingId;
     const existing = state.items.find((item) => item.id === id);
-    if (!isUuid(id) || !existing) return failForm(form, null, "", "That food is no longer on this day.");
+    const uid = userId();
+    if (!isUuid(id) || !existing || !uid) return failForm(form, null, "", "That food is no longer on this day.");
     const parsed = readItem(form, existing);
     if (parsed.error) return failForm(form, null, "", parsed.error);
     button.disabled = true;
     button.textContent = "Saving…";
     try {
-      const { data, error } = await client.from("food_items").update(parsed.item).eq("id", id).select("id");
+      const { data, error } = await client.from("food_items").update(parsed.item).eq("id", id).eq("user_id", uid).select("id");
       if (error || !data || data.length !== 1) {
         failForm(form, button, "Save", friendlyError(error, "Could not save. Check your connection and try again."));
         return;
@@ -1401,15 +1623,185 @@
     });
   }
 
-  function saveGoals(form) {
+  async function saveGoals(form) {
     const parsed = readGoalFields(form);
     if (parsed.error) {
       failForm(form, null, "", parsed.error);
       return;
     }
-    try { localStorage.setItem(GOALS_KEY, JSON.stringify(parsed.goal)); } catch { /* ignore */ }
+    const uid = userId();
+    const button = form.querySelector('button[type="submit"]');
+    if (!uid) return failForm(form, null, "", "Sign in again, then save your goals.");
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Saving…";
+    }
+    const { error } = await client.from("profiles").update({
+      calorie_goal: Math.round(parsed.goal.calories),
+      protein_pct: parsed.goal.protein,
+      carbs_pct: parsed.goal.carbs,
+      fat_pct: parsed.goal.fat,
+    }).eq("id", uid);
+    if (error) return failForm(form, button, "Save goals", "Could not save your goals. Check your connection and try again.");
+    state.profile = {
+      ...state.profile,
+      calorie_goal: Math.round(parsed.goal.calories),
+      protein_pct: parsed.goal.protein,
+      carbs_pct: parsed.goal.carbs,
+      fat_pct: parsed.goal.fat,
+    };
     flash("Goals saved");
     render();
+  }
+
+  function loginHtml() {
+    const sent = state.linkSent
+      ? `<p class="hint">Check ${esc(state.linkSent)}. Open the link on this device. It signs you in.</p>`
+      : "";
+    return `<div class="login">
+      <form class="card login-card" data-form="sign-in" autocomplete="on">
+        <img class="logo" src="icons/Logo.png" alt="" width="40" height="40">
+        <h1>Tracker</h1>
+        <p>Enter your email. Food photos stay in your own Claude chat. This site shows the meals that chat saved for you.</p>
+        <label class="field"><span>Email</span><input name="email" type="email" autocomplete="email" required value="${esc(state.linkSent)}"></label>
+        <button type="submit" class="primary"${state.signingIn ? " disabled" : ""}>${state.signingIn ? "Sending…" : "Email me a sign-in link"}</button>
+        ${sent}
+        ${state.authError ? `<p class="error" role="alert">${esc(state.authError)}</p>` : ""}
+      </form>
+    </div>`;
+  }
+
+  let authEpoch = 0;
+
+  function showSignedOut() {
+    authEpoch += 1;
+    state.session = null;
+    state.profile = null;
+    state.items = [];
+    state.weight.entries = [];
+    state.weight.loaded = false;
+    state.weight.error = "";
+    state.view = "day";
+    state.editingId = "";
+    state.mealTimeGroup = "";
+    state.confirm = null;
+    state.booting = false;
+    state.signingIn = false;
+    state.linkSent = "";
+    state.error = "";
+    render();
+  }
+
+  async function loadProfile(session) {
+    const uid = session.user.id;
+    let { data, error } = await client
+      .from("profiles")
+      .select("id, display_name, calorie_goal, protein_pct, carbs_pct, fat_pct")
+      .eq("id", uid)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) {
+      const created = await client.from("profiles").insert({
+        id: uid,
+        display_name: displayNameFrom(session.user),
+      }).select("id, display_name, calorie_goal, protein_pct, carbs_pct, fat_pct").single();
+      if (created.error) throw created.error;
+      data = created.data;
+    }
+    state.profile = {
+      id: data.id,
+      display_name: data.display_name || displayNameFrom(session.user),
+      calorie_goal: Number(data.calorie_goal) || DEFAULT_GOALS.calories,
+      protein_pct: Number(data.protein_pct),
+      carbs_pct: Number(data.carbs_pct),
+      fat_pct: Number(data.fat_pct),
+    };
+    const onDevice = deviceGoals();
+    const stillDefault = state.profile.calorie_goal === DEFAULT_GOALS.calories
+      && state.profile.protein_pct === DEFAULT_GOALS.protein
+      && state.profile.carbs_pct === DEFAULT_GOALS.carbs
+      && state.profile.fat_pct === DEFAULT_GOALS.fat;
+    const deviceDiffers = onDevice && (
+      onDevice.calories !== DEFAULT_GOALS.calories
+      || onDevice.protein !== DEFAULT_GOALS.protein
+      || onDevice.carbs !== DEFAULT_GOALS.carbs
+      || onDevice.fat !== DEFAULT_GOALS.fat
+    );
+    if (stillDefault && deviceDiffers) {
+      const updated = await client.from("profiles").update({
+        calorie_goal: Math.round(onDevice.calories),
+        protein_pct: onDevice.protein,
+        carbs_pct: onDevice.carbs,
+        fat_pct: onDevice.fat,
+      }).eq("id", uid);
+      if (!updated.error) {
+        state.profile.calorie_goal = Math.round(onDevice.calories);
+        state.profile.protein_pct = onDevice.protein;
+        state.profile.carbs_pct = onDevice.carbs;
+        state.profile.fat_pct = onDevice.fat;
+      }
+    }
+  }
+
+  async function afterSignIn(session) {
+    const epoch = ++authEpoch;
+    state.session = session;
+    state.authError = "";
+    state.signingIn = false;
+    try {
+      await loadProfile(session);
+      if (epoch !== authEpoch) return;
+      const claimed = await client.rpc("claim_unowned_meals");
+      if (epoch !== authEpoch) return;
+      if (!claimed.error && Number(claimed.data) > 0) state.toast = "Your earlier meals are on your account now.";
+    } catch (error) {
+      if (epoch !== authEpoch) return;
+      state.error = friendlyError(error, "Could not open your account. Check your connection and try again.");
+    }
+    if (epoch !== authEpoch) return;
+    state.booting = false;
+    if (!state.dateKey) state.dateKey = todayKey();
+    loadDay();
+  }
+
+  async function signIn(email) {
+    const address = String(email || "").trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) {
+      state.authError = "Enter the email you want to use.";
+      state.linkSent = "";
+      render();
+      return;
+    }
+    state.signingIn = true;
+    state.authError = "";
+    state.linkSent = "";
+    render();
+    const { error } = await client.auth.signInWithOtp({
+      email: address,
+      options: {
+        emailRedirectTo: `${window.location.origin}${window.location.pathname}`,
+        shouldCreateUser: true,
+      },
+    });
+    state.signingIn = false;
+    if (error) {
+      state.authError = /rate limit/i.test(error.message)
+        ? "Too many emails were sent. Wait a few minutes and try again."
+        : "Could not send the email. Check the address and try again.";
+    } else {
+      state.linkSent = address;
+    }
+    render();
+  }
+
+  async function signOut() {
+    const { error } = await client.auth.signOut();
+    if (error) {
+      state.error = "Could not sign out. Check your connection and try again.";
+      render();
+      return;
+    }
+    showSignedOut();
   }
 
   function shiftPeriod(direction) {
@@ -1430,7 +1822,17 @@
     state.confirm = null;
     if (view === "day") {
       state.editingId = "";
+      state.mealTimeGroup = "";
+      if (state.view === "day") {
+        render();
+        window.scrollTo(0, 0);
+        return;
+      }
       loadDay();
+      return;
+    }
+    if (view === "weight") {
+      loadWeight();
       return;
     }
     if (view === "week" || view === "month") {
@@ -1466,6 +1868,10 @@
       runConfirm();
       return;
     }
+    if (action === "sign-out") {
+      signOut();
+      return;
+    }
     if (action === "nav") navigate(button.dataset.view);
     else if (action === "prev-day") {
       state.dateKey = addDays(state.dateKey, -1);
@@ -1481,6 +1887,7 @@
       loadDay();
     }     else if (action === "reload-day") loadDay();
     else if (action === "reload-period") loadPeriod();
+    else if (action === "reload-weight") loadWeight();
     else if (action === "prev-period") shiftPeriod(-1);
     else if (action === "next-period") shiftPeriod(1);
     else if (action === "back") {
@@ -1507,6 +1914,15 @@
         confirmLabel: "Delete",
         run: () => deleteItem(item.id),
       });
+    } else if (action === "ask-delete-weight") {
+      const entry = state.weight.entries.find((row) => row.id === button.dataset.id);
+      if (!entry) return;
+      openConfirm({
+        title: "Delete this weight?",
+        body: `${fmtAmount(entry.weight_kg)} kg on ${formatTableDate(entry.weighed_on)} will be removed.`,
+        confirmLabel: "Delete",
+        run: () => deleteWeight(entry.id),
+      });
     } else if (action === "ask-delete-meal") {
       const meal = groupMeals(state.items).find((row) => row.meal_group_id === button.dataset.group);
       if (!meal) return;
@@ -1531,8 +1947,10 @@
     const form = event.target;
     if (!(form instanceof HTMLFormElement) || !root.contains(form)) return;
     event.preventDefault();
-    if (form.dataset.form === "add") submitAdd(form);
+    if (form.dataset.form === "sign-in") signIn(form.email.value);
+    else if (form.dataset.form === "add") submitAdd(form);
     else if (form.dataset.form === "edit") submitEdit(form);
+    else if (form.dataset.form === "weight") submitWeight(form);
     else if (form.dataset.form === "goals") saveGoals(form);
     else if (form.dataset.form === "meal-time") {
       const button = form.querySelector('[data-action="save-meal-time"]');
@@ -1567,6 +1985,12 @@
     }
     if (target.name === "eaten_date" && target.form?.dataset.form === "add") {
       loadAddMeals(target.value);
+      return;
+    }
+    if (target.name === "weighed_on" && target.form?.dataset.form === "weight") {
+      const entry = state.weight.entries.find((row) => row.weighed_on === target.value);
+      const input = target.form.querySelector('[name="weight_kg"]');
+      if (input) input.value = entry ? displayNumber(entry.weight_kg) : "";
     }
   }
 
@@ -1580,9 +2004,10 @@
     if (event.key === "Escape" && state.confirm) closeConfirm();
   });
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState !== "visible" || state.booting || state.confirm || state.saving) return;
+    if (document.visibilityState !== "visible" || state.booting || !state.session || state.confirm || state.saving) return;
     if (state.view === "day") loadDay();
     if (state.view === "week" || state.view === "month") loadPeriod();
+    if (state.view === "weight") loadWeight();
   });
 
   applyTheme(state.theme);
@@ -1591,7 +2016,22 @@
     navigator.serviceWorker.register("./sw.js").catch(() => {});
   }
 
-  state.booting = false;
-  state.dateKey = todayKey();
-  loadDay();
+  client.auth.onAuthStateChange((event) => {
+    if (event === "SIGNED_OUT") queueMicrotask(() => showSignedOut());
+  });
+
+  client.auth.getSession().then(({ data, error }) => {
+    if (error || !data.session) {
+      state.booting = false;
+      state.session = null;
+      render();
+      return;
+    }
+    afterSignIn(data.session);
+  }).catch(() => {
+    state.booting = false;
+    state.session = null;
+    state.authError = "Could not start sign-in. Check your connection and refresh.";
+    render();
+  });
 })();

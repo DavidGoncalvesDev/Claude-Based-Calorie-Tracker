@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "calorie-tracker": {
+      "type": "http",
+      "url": "https://eurqqiebokwcrrhfbihg.supabase.co/functions/v1/calorie-mcp"
+    }
+  }
+}
