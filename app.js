@@ -79,7 +79,6 @@
     profile: null,
     authError: "",
     signingIn: false,
-    linkSent: "",
     period: {
       kind: "week",
       anchor: "",
@@ -1150,7 +1149,7 @@
         <div class="themes" role="group" aria-label="Colours">${choices}</div>
       </section>
       <section class="card stack">
-        <p class="hint">Days follow the clock in Lisbon. Photos stay in your Claude chat. This site shows the meals that chat saved for your email.</p>
+        <p class="hint">Days follow the clock in Lisbon. Photos stay in your Claude chat. This site shows the meals that chat saved for your username.</p>
       </section>
     </form>`;
   }
@@ -1655,17 +1654,14 @@
   }
 
   function loginHtml() {
-    const sent = state.linkSent
-      ? `<p class="hint">Check ${esc(state.linkSent)}. Open the link on this device. It signs you in.</p>`
-      : "";
     return `<div class="login">
       <form class="card login-card" data-form="sign-in" autocomplete="on">
         <img class="logo" src="icons/Logo.png" alt="" width="40" height="40">
         <h1>Tracker</h1>
-        <p>Enter the email for your account. This site shows the meals Claude saved for that address.</p>
-        <label class="field"><span>Email</span><input name="email" type="email" autocomplete="email" required value="${esc(state.linkSent)}"></label>
-        <button type="submit" class="primary"${state.signingIn ? " disabled" : ""}>${state.signingIn ? "One moment…" : "Continue"}</button>
-        ${sent}
+        <p>Type your username. Claude saves meals onto that same username, and this site shows them.</p>
+        <label class="field"><span>Username</span><input name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
+        <button type="submit" class="primary"${state.signingIn ? " disabled" : ""}>${state.signingIn ? "One moment…" : "Open"}</button>
+        <p class="hint">Anyone who knows this username can open these stats. Pick one you will remember.</p>
         ${state.authError ? `<p class="error" role="alert">${esc(state.authError)}</p>` : ""}
       </form>
     </div>`;
@@ -1687,7 +1683,6 @@
     state.confirm = null;
     state.booting = false;
     state.signingIn = false;
-    state.linkSent = "";
     state.error = "";
     render();
   }
@@ -1764,34 +1759,49 @@
     loadDay();
   }
 
-  async function signIn(email) {
-    const address = String(email || "").trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) {
-      state.authError = "Enter the email you want to use.";
-      state.linkSent = "";
+  async function openWord(word) {
+    let response;
+    try {
+      response = await fetch(`${SUPABASE_URL}/functions/v1/codename-auth`, {
+        method: "POST",
+        headers: { "content-type": "application/json", apikey: SUPABASE_KEY },
+        body: JSON.stringify({ username: word }),
+      });
+    } catch {
+      throw new Error("Could not reach sign-in. Check your connection and try again.");
+    }
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok || !body.access_token || !body.refresh_token) {
+      throw new Error(body.message || "Could not open that username. Try again.");
+    }
+    const { data, error } = await client.auth.setSession({
+      access_token: body.access_token,
+      refresh_token: body.refresh_token,
+    });
+    if (error || !data.session) throw new Error("Could not open that username. Try again.");
+    return data.session;
+  }
+
+  async function signIn(word) {
+    const typed = String(word || "").trim();
+    if (!/^[A-Za-z][A-Za-z0-9]{2,31}$/.test(typed)) {
+      state.authError = "Use a username of 3 to 32 letters or numbers, starting with a letter.";
       render();
       return;
     }
     state.signingIn = true;
     state.authError = "";
-    state.linkSent = "";
     render();
-    const { error } = await client.auth.signInWithOtp({
-      email: address,
-      options: {
-        emailRedirectTo: `${window.location.origin}${window.location.pathname}`,
-        shouldCreateUser: true,
-      },
-    });
-    state.signingIn = false;
-    if (error) {
-      state.authError = /rate limit/i.test(error.message)
-        ? "Too many emails were sent. Wait a few minutes and try again."
-        : "Could not send the email. Check the address and try again.";
-    } else {
-      state.linkSent = address;
+    try {
+      const session = await openWord(typed);
+      await afterSignIn(session);
+    } catch (error) {
+      state.signingIn = false;
+      state.authError = error instanceof Error && error.message
+        ? error.message
+        : "Could not open that username. Try again.";
+      render();
     }
-    render();
   }
 
   async function signOut() {
@@ -1947,7 +1957,7 @@
     const form = event.target;
     if (!(form instanceof HTMLFormElement) || !root.contains(form)) return;
     event.preventDefault();
-    if (form.dataset.form === "sign-in") signIn(form.email.value);
+    if (form.dataset.form === "sign-in") signIn(form.username.value);
     else if (form.dataset.form === "add") submitAdd(form);
     else if (form.dataset.form === "edit") submitEdit(form);
     else if (form.dataset.form === "weight") submitWeight(form);
