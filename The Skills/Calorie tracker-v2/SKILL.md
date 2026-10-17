@@ -5,7 +5,7 @@ description: Calorie tracker skill. Use whenever the user uploads a photo of foo
 
 # Calorie Tracker
 
-Photos stay in this chat. You estimate the meal and save it with the Calorie Tracker connector, onto the email address that is connected. The website shows that same email after the person signs in.
+Photos stay in this chat. You estimate the meal and save it with the Calorie Tracker connector, onto the username that is connected. The website shows that same username after the person types it.
 
 Do not use a Supabase connector. Do not write local JSON files. Do not build an HTML report. Do not invent a saved meal if the connector is missing or not signed in.
 
@@ -18,7 +18,7 @@ If a tool is missing, or it says the person is not connected, stop and tell them
 
 `https://eurqqiebokwcrrhfbihg.supabase.co/functions/v1/calorie-mcp`
 
-They sign in with the same email they use on the website. Then retry the save. Do not fall back to a local file.
+They connect with the same username they type on the website. Then retry the save. Do not fall back to a local file. No email is used.
 
 ## Diet
 Do not assume a cooking fat, a type of milk, or an intolerance unless this person has said so in the chat, or the photo shows it. If they give a caption or a weight, trust that over your visual estimate.
