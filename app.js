@@ -66,12 +66,10 @@
     try {
       const saved = JSON.parse(localStorage.getItem(WEIGHT_SETTINGS_KEY) || "null");
       return {
-        viewMode: saved?.viewMode || "daily",
-        compareBy: saved?.compareBy || "month_avg",
         objective: saved?.objective || "lose",
       };
     } catch {
-      return { viewMode: "daily", compareBy: "month_avg", objective: "lose" };
+      return { objective: "lose" };
     }
   }
 
@@ -108,8 +106,6 @@
       loading: false,
       error: "",
       loaded: false,
-      viewMode: initialWeightSettings.viewMode,
-      compareBy: initialWeightSettings.compareBy,
       objective: initialWeightSettings.objective,
     },
     nutrientModal: null,
@@ -171,17 +167,18 @@
 
   function saveWeightSettings(updates) {
     const current = {
-      viewMode: state.weight.viewMode,
-      compareBy: state.weight.compareBy,
       objective: state.weight.objective,
       ...updates,
     };
-    state.weight.viewMode = current.viewMode;
-    state.weight.compareBy = current.compareBy;
     state.weight.objective = current.objective;
     try {
       localStorage.setItem(WEIGHT_SETTINGS_KEY, JSON.stringify(current));
     } catch {}
+    const uid = userId();
+    if (uid && client && updates.objective) {
+      if (state.profile) state.profile.weight_objective = updates.objective;
+      client.from("profiles").update({ weight_objective: updates.objective }).eq("id", uid).then(() => {}).catch(() => {});
+    }
   }
 
   function num(value) {
@@ -480,7 +477,7 @@
     if (meta && chosen) meta.content = chosen.color;
   }
 
-  function setTheme(theme) {
+  function setTheme(theme, skipDb = false) {
     const name = normalizeTheme(theme);
     state.theme = name;
     try { localStorage.setItem(THEME_KEY, name); } catch { /* storage may be blocked */ }
@@ -488,7 +485,12 @@
     document.querySelectorAll("[data-theme-choice]").forEach((button) => {
       button.setAttribute("aria-pressed", String(button.dataset.themeChoice === name));
     });
-    if ((state.view === "week" || state.view === "month") && !state.booting) render();
+    if ((state.view === "week" || state.view === "month" || state.view === "weight") && !state.booting) render();
+    const uid = userId();
+    if (!skipDb && uid && client) {
+      if (state.profile) state.profile.theme = name;
+      client.from("profiles").update({ theme: name }).eq("id", uid).then(() => {}).catch(() => {});
+    }
   }
 
   function flash(message) {
@@ -648,6 +650,26 @@
     return value || fallback;
   }
 
+  function cleanTooltipOptions() {
+    const cardBg = cssVar("--card", "#ffffff");
+    const textColor = cssVar("--text", "#1c1917");
+    const mutedColor = cssVar("--muted", "#78716c");
+    const lineColor = cssVar("--line", "#e6dfd2");
+    return {
+      backgroundColor: cardBg,
+      titleColor: mutedColor,
+      bodyColor: textColor,
+      borderColor: lineColor,
+      borderWidth: 1,
+      padding: { top: 8, bottom: 8, left: 12, right: 12 },
+      cornerRadius: 10,
+      displayColors: false,
+      titleFont: { size: 12, weight: "bold", family: "system-ui, -apple-system, sans-serif" },
+      bodyFont: { size: 14, weight: "800", family: "system-ui, -apple-system, sans-serif" },
+      boxPadding: 4,
+    };
+  }
+
   function chartOptions(stacked, fromZero = true) {
     const text = cssVar("--muted", "#57534e");
     const grid = cssVar("--line", "#e6dfd2");
@@ -657,7 +679,10 @@
       animation: matchMedia("(prefers-reduced-motion: reduce)").matches ? false : { duration: 350 },
       plugins: {
         legend: { position: "bottom", labels: { color: text, boxWidth: 12 } },
-        tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${fmtAmount(ctx.parsed.y)}` } },
+        tooltip: {
+          ...cleanTooltipOptions(),
+          callbacks: { label: (ctx) => `${ctx.dataset.label}: ${fmtAmount(ctx.parsed.y)}` },
+        },
       },
       scales: {
         x: { stacked, ticks: { color: text, maxRotation: 0, autoSkip: true }, grid: { display: false } },
@@ -694,9 +719,10 @@
     });
   }
 
-  function monthlyWeightData(entries, compareBy = "month_avg", objective = "lose") {
+  function monthlyWeightData(entries, objective = "lose") {
     if (!entries || !entries.length) return [];
     const ordered = [...entries].sort((a, b) => String(a.weighed_on).localeCompare(String(b.weighed_on)));
+    const firstEntry = ordered[0];
     const map = new Map();
     for (const entry of ordered) {
       const monthKey = entry.weighed_on.slice(0, 7);
@@ -709,19 +735,16 @@
       const mKey = months[i];
       const mEntries = map.get(mKey);
       const monthAvg = mEntries.reduce((s, e) => s + e.weight_kg, 0) / mEntries.length;
+      const roundedAvg = Math.round(monthAvg * 100) / 100;
 
-      const lastDay = monthEnd(mKey + "-01");
-      const lastWeekCutoff = addDays(lastDay, -6);
-      const lastWeekEntries = mEntries.filter((e) => e.weighed_on >= lastWeekCutoff);
-      const lastWeekAvg = lastWeekEntries.length
-        ? lastWeekEntries.reduce((s, e) => s + e.weight_kg, 0) / lastWeekEntries.length
-        : monthAvg;
-
-      const repWeight = compareBy === "last_week" ? lastWeekAvg : monthAvg;
-      const roundedRep = Math.round(repWeight * 100) / 100;
-
-      const prev = results[i - 1];
-      const diff = prev ? Math.round((roundedRep - prev.repWeight) * 100) / 100 : 0;
+      let diff = 0;
+      const isFirstMonth = (i === 0);
+      if (isFirstMonth) {
+        diff = Math.round((roundedAvg - firstEntry.weight_kg) * 100) / 100;
+      } else {
+        const prev = results[i - 1];
+        diff = Math.round((roundedAvg - prev.monthAvg) * 100) / 100;
+      }
 
       const [y, m] = mKey.split("-").map(Number);
       const date = new Date(Date.UTC(y, m - 1, 1));
@@ -731,36 +754,29 @@
         monthKey: mKey,
         monthLabel,
         entriesCount: mEntries.length,
-        monthAvg: Math.round(monthAvg * 100) / 100,
-        lastWeekAvg: Math.round(lastWeekAvg * 100) / 100,
-        repWeight: roundedRep,
-        diff: i === 0 ? 0 : diff,
-        hasPrevious: i > 0,
+        monthAvg: roundedAvg,
+        diff,
+        isFirstMonth,
+        firstDayWeight: firstEntry.weight_kg,
+        firstDayDate: firstEntry.weighed_on,
       });
     }
     return results;
   }
 
-  function weightDiffColor(diff, objective, hasPrev) {
-    if (!hasPrev || Math.abs(diff) < 0.05) return "rgba(140, 140, 140, 0.6)";
+  function weightDiffColor(diff, objective = "lose") {
+    if (Math.abs(diff) < 0.05) return "rgba(140, 140, 140, 0.6)";
     const up = diff > 0;
     if (objective === "gain") {
       return up ? "#10b981" : "#ef4444";
     }
-    if (objective === "maintain") {
-      return Math.abs(diff) <= 0.4 ? "#10b981" : "#ef4444";
-    }
     return up ? "#ef4444" : "#10b981";
   }
 
-  function weightDiffBadge(diff, objective, hasPrev) {
-    if (!hasPrev) return '<span class="delta-pill neutral">Baseline</span>';
+  function weightDiffBadge(diff, objective = "lose") {
     if (Math.abs(diff) < 0.05) return '<span class="delta-pill neutral">0.0 kg</span>';
     const up = diff > 0;
-    let tone = "neutral";
-    if (objective === "gain") tone = up ? "good" : "bad";
-    else if (objective === "maintain") tone = Math.abs(diff) <= 0.4 ? "good" : "bad";
-    else tone = up ? "bad" : "good";
+    const tone = (objective === "gain") ? (up ? "good" : "bad") : (up ? "bad" : "good");
     return `<span class="delta-pill ${tone}">${esc(signedKg(diff))}</span>`;
   }
 
@@ -773,24 +789,34 @@
     const weeklyCanvas = document.getElementById("chart-weight-weekly");
     const monthlyCanvas = document.getElementById("chart-weight-monthly");
 
-    // 1. Daily Weight Line Chart
+    // 1. Daily Weight Line Chart with clean themed tooltip
     if (dailyCanvas) {
       const color = cssVar("--kcal", "#f25c2c");
       const options = chartOptions(false, false);
       options.plugins.legend.display = false;
-      options.plugins.tooltip.callbacks.label = (ctx) => `${fmtAmount(ctx.parsed.y)} kg`;
+      options.plugins.tooltip = {
+        ...cleanTooltipOptions(),
+        callbacks: {
+          title: (items) => {
+            const entry = entries[items[0].dataIndex];
+            return entry ? formatTableDate(entry.weighed_on) : items[0].label;
+          },
+          label: (ctx) => `${fmtAmount(ctx.parsed.y)} kg`,
+        },
+      };
       charts.push(new window.Chart(dailyCanvas, {
         type: "line",
         data: {
           labels: entries.map((entry) => formatChartLabel(entry.weighed_on)),
           datasets: [{
-            label: "Daily Weight",
+            label: "Weight",
             data: entries.map((entry) => entry.weight_kg),
             borderColor: color,
             backgroundColor: "rgba(242, 92, 44, 0.18)",
             pointBackgroundColor: color,
             tension: 0.25,
             pointRadius: entries.length > 40 ? 0 : 4,
+            pointHoverRadius: 6,
             fill: true,
           }],
         },
@@ -798,16 +824,22 @@
       }));
     }
 
-    // 2. Weekly Average Line Chart
+    // 2. Weekly Average Line Chart with clean themed tooltip
     if (weeklyCanvas) {
       const weeks = weeklyWeightAverages(entries);
       if (weeks.length) {
         const color = cssVar("--accent", "#0f766e");
         const options = chartOptions(false, false);
         options.plugins.legend.display = false;
-        options.plugins.tooltip.callbacks.label = (ctx) => {
-          const w = weeks[ctx.dataIndex];
-          return `${fmtAmount(ctx.parsed.y)} kg · avg of ${w.count} weigh-in${w.count === 1 ? "" : "s"}`;
+        options.plugins.tooltip = {
+          ...cleanTooltipOptions(),
+          callbacks: {
+            title: (items) => weeks[items[0].dataIndex]?.label || items[0].label,
+            label: (ctx) => {
+              const w = weeks[ctx.dataIndex];
+              return `${fmtAmount(ctx.parsed.y)} kg avg · ${w.count} weigh-in${w.count === 1 ? "" : "s"}`;
+            },
+          },
         };
         charts.push(new window.Chart(weeklyCanvas, {
           type: "line",
@@ -830,20 +862,21 @@
       }
     }
 
-    // 3. Monthly Change Bar Chart
+    // 3. Monthly Change Bar Chart with clean themed tooltip
     if (monthlyCanvas) {
-      const monthly = monthlyWeightData(entries, state.weight.compareBy, state.weight.objective);
+      const objective = state.profile?.weight_objective || state.weight.objective || "lose";
+      const monthly = monthlyWeightData(entries, objective);
       if (monthly.length) {
         const text = cssVar("--muted", "#57534e");
         const grid = cssVar("--line", "#e6dfd2");
-        const bgColors = monthly.map((m) => weightDiffColor(m.diff, state.weight.objective, m.hasPrevious));
+        const bgColors = monthly.map((m) => weightDiffColor(m.diff, objective));
 
         charts.push(new window.Chart(monthlyCanvas, {
           type: "bar",
           data: {
             labels: monthly.map((m) => m.monthLabel),
             datasets: [{
-              label: "Monthly Weight Change (kg)",
+              label: "Monthly Weight Change",
               data: monthly.map((m) => m.diff),
               backgroundColor: bgColors,
               borderRadius: 6,
@@ -857,15 +890,15 @@
             plugins: {
               legend: { display: false },
               tooltip: {
+                ...cleanTooltipOptions(),
                 callbacks: {
-                  title: (items) => {
-                    const m = monthly[items[0].dataIndex];
-                    return m.monthLabel;
-                  },
+                  title: (items) => monthly[items[0].dataIndex]?.monthLabel || items[0].label,
                   label: (ctx) => {
                     const m = monthly[ctx.dataIndex];
-                    if (!m.hasPrevious) return `Baseline month: ${fmtAmount(m.repWeight)} kg (${m.entriesCount} weigh-ins)`;
-                    return `${signedKg(m.diff)} vs previous month · Current avg: ${fmtAmount(m.repWeight)} kg`;
+                    if (m.isFirstMonth) {
+                      return `${signedKg(m.diff)} vs first weigh-in (${fmtAmount(m.firstDayWeight)} kg)`;
+                    }
+                    return `${signedKg(m.diff)} vs previous month (${fmtAmount(m.monthAvg)} kg avg)`;
                   },
                 },
               },
@@ -1238,22 +1271,20 @@
     const previous = ordered.length > 1 ? ordered[ordered.length - 2] : null;
     const first = ordered[0];
 
-    const compareBy = state.weight.compareBy || "month_avg";
-    const objective = state.weight.objective || "lose";
+    const objective = state.profile?.weight_objective || state.weight.objective || "lose";
 
     const weeklyAverages = weeklyWeightAverages(ordered);
     const latestWeek = weeklyAverages[weeklyAverages.length - 1];
-    const prevWeek = weeklyAverages.length > 1 ? weeklyAverages[weeklyAverages.length - 2] : null;
 
-    const monthlyData = monthlyWeightData(ordered, compareBy, objective);
+    const monthlyData = monthlyWeightData(ordered, objective);
     const latestMonth = monthlyData[monthlyData.length - 1];
     const prevMonth = monthlyData.length > 1 ? monthlyData[monthlyData.length - 2] : null;
 
     const stats = latest ? `<section class="stats">
       <article class="card stat"><span>Latest weight</span><strong class="num">${esc(fmtAmount(latest.weight_kg))} kg</strong><span>${esc(formatTableDate(latest.weighed_on))}</span></article>
       ${previous ? `<article class="card stat"><span>Since last</span><strong class="num">${esc(signedKg(latest.weight_kg - previous.weight_kg))}</strong><span>${esc(formatShort(previous.weighed_on))}</span></article>` : ""}
-      ${latestWeek ? `<article class="card stat"><span>Weekly avg</span><strong class="num">${esc(fmtAmount(latestWeek.avg))} kg</strong><span>${latestWeek.diff != null ? weightDiffBadge(latestWeek.diff, objective, true) : esc(latestWeek.label)}</span></article>` : ""}
-      ${latestMonth && latestMonth.hasPrevious ? `<article class="card stat"><span>Monthly change</span><strong class="num">${weightDiffBadge(latestMonth.diff, objective, true)}</strong><span>vs ${prevMonth ? esc(prevMonth.monthLabel) : "prior month"}</span></article>` : (first && first !== latest ? `<article class="card stat"><span>Since first</span><strong class="num">${esc(signedKg(latest.weight_kg - first.weight_kg))}</strong><span>${esc(formatShort(first.weighed_on))}</span></article>` : "")}
+      ${latestWeek ? `<article class="card stat"><span>Weekly avg</span><strong class="num">${esc(fmtAmount(latestWeek.avg))} kg</strong><span>${latestWeek.diff != null ? weightDiffBadge(latestWeek.diff, objective) : esc(latestWeek.label)}</span></article>` : ""}
+      ${latestMonth ? `<article class="card stat"><span>Monthly change</span><strong class="num">${weightDiffBadge(latestMonth.diff, objective)}</strong><span>${latestMonth.isFirstMonth ? "vs start" : `vs ${prevMonth ? esc(prevMonth.monthLabel) : "prior"}`}</span></article>` : (first && first !== latest ? `<article class="card stat"><span>Since first</span><strong class="num">${esc(signedKg(latest.weight_kg - first.weight_kg))}</strong><span>${esc(formatShort(first.weighed_on))}</span></article>` : "")}
     </section>` : "";
 
     const form = `<form class="card stack" data-form="weight" autocomplete="off">
@@ -1280,38 +1311,16 @@
         <section class="card chart-card full-span">
           <h2>Daily weight</h2>
           <div class="chart-box"><canvas id="chart-weight-daily"></canvas></div>
-          <p class="hint">Line graph connecting each daily weigh-in.</p>
         </section>
 
         <section class="card chart-card">
           <h2>Weekly average</h2>
           <div class="chart-box"><canvas id="chart-weight-weekly"></canvas></div>
-          <p class="hint">Graph of average weights by calendar week.</p>
         </section>
 
         <section class="card chart-card">
-          <div class="weight-card-header">
-            <h2>Monthly change</h2>
-          </div>
-          <div class="weight-controls-row">
-            <div class="control-group">
-              <span class="control-label">Objective:</span>
-              <div class="chips-mini">
-                <button type="button" class="chip-sm" data-action="set-weight-objective" data-objective="lose" aria-pressed="${objective === 'lose'}">Lose weight</button>
-                <button type="button" class="chip-sm" data-action="set-weight-objective" data-objective="maintain" aria-pressed="${objective === 'maintain'}">Maintain</button>
-                <button type="button" class="chip-sm" data-action="set-weight-objective" data-objective="gain" aria-pressed="${objective === 'gain'}">Gain weight</button>
-              </div>
-            </div>
-            <div class="control-group">
-              <span class="control-label">Month weight:</span>
-              <div class="chips-mini">
-                <button type="button" class="chip-sm" data-action="set-weight-compare" data-compare="month_avg" aria-pressed="${compareBy === 'month_avg'}">Full month avg</button>
-                <button type="button" class="chip-sm" data-action="set-weight-compare" data-compare="last_week" aria-pressed="${compareBy === 'last_week'}">Last week avg</button>
-              </div>
-            </div>
-          </div>
+          <h2>Monthly change</h2>
           <div class="chart-box"><canvas id="chart-weight-monthly"></canvas></div>
-          <p class="hint">Bars go up if weight went up, down if it went down. Colors follow your objective.</p>
         </section>
       </div>`;
     }
@@ -1437,23 +1446,15 @@
         <button class="primary" type="submit">Save goals</button>
       </section>
       <section class="card stack">
-        <h2>Weight tracking</h2>
+        <h2>Weight objective</h2>
         <label class="field">
-          <span>Weight objective</span>
+          <span>Objective</span>
           <select name="weight_objective">
-            <option value="lose"${state.weight.objective === "lose" ? " selected" : ""}>Lose weight (Cut) — Drops are green, gains are red</option>
-            <option value="maintain"${state.weight.objective === "maintain" ? " selected" : ""}>Maintain weight — Steady is green, changes are red</option>
-            <option value="gain"${state.weight.objective === "gain" ? " selected" : ""}>Gain weight (Bulk) — Gains are green, drops are red</option>
+            <option value="lose"${(state.profile?.weight_objective || state.weight.objective) === "lose" ? " selected" : ""}>Lose weight</option>
+            <option value="gain"${(state.profile?.weight_objective || state.weight.objective) === "gain" ? " selected" : ""}>Gain weight</option>
           </select>
         </label>
-        <label class="field">
-          <span>Monthly comparison basis</span>
-          <select name="weight_compare_by">
-            <option value="month_avg"${state.weight.compareBy === "month_avg" ? " selected" : ""}>Full month average (Smoothest, less daily noise)</option>
-            <option value="last_week"${state.weight.compareBy === "last_week" ? " selected" : ""}>Average of last week of month (Exit weight)</option>
-          </select>
-        </label>
-        <p class="hint">Controls the bar direction and colors on the monthly weight comparison chart.</p>
+        <p class="hint">Sets whether weight drops are green (losing weight) or weight gains are green (gaining weight).</p>
       </section>
       <section class="card stack">
         <h2>Colours</h2>
@@ -2015,27 +2016,20 @@
       button.disabled = true;
       button.textContent = "Saving…";
     }
-    const { error } = await client.from("profiles").update({
+    const wObj = form.querySelector('[name="weight_objective"]')?.value;
+    const updates = {
       calorie_goal: Math.round(parsed.goal.calories),
       protein_pct: parsed.goal.protein,
       carbs_pct: parsed.goal.carbs,
       fat_pct: parsed.goal.fat,
-    }).eq("id", uid);
+    };
+    if (wObj) updates.weight_objective = wObj;
+    const { error } = await client.from("profiles").update(updates).eq("id", uid);
     if (error) return failForm(form, button, "Save goals", "Could not save your goals. Check your connection and try again.");
-    const wObj = form.querySelector('[name="weight_objective"]')?.value;
-    const wCmp = form.querySelector('[name="weight_compare_by"]')?.value;
-    if (wObj || wCmp) {
-      saveWeightSettings({
-        ...(wObj ? { objective: wObj } : {}),
-        ...(wCmp ? { compareBy: wCmp } : {}),
-      });
-    }
+    if (wObj) saveWeightSettings({ objective: wObj });
     state.profile = {
       ...state.profile,
-      calorie_goal: Math.round(parsed.goal.calories),
-      protein_pct: parsed.goal.protein,
-      carbs_pct: parsed.goal.carbs,
-      fat_pct: parsed.goal.fat,
+      ...updates,
     };
     flash("Goals saved");
     render();
@@ -2079,7 +2073,7 @@
     const uid = session.user.id;
     let { data, error } = await client
       .from("profiles")
-      .select("id, display_name, calorie_goal, protein_pct, carbs_pct, fat_pct")
+      .select("id, display_name, calorie_goal, protein_pct, carbs_pct, fat_pct, theme, weight_objective")
       .eq("id", uid)
       .maybeSingle();
     if (error) throw error;
@@ -2087,7 +2081,7 @@
       const created = await client.from("profiles").insert({
         id: uid,
         display_name: displayNameFrom(session.user),
-      }).select("id, display_name, calorie_goal, protein_pct, carbs_pct, fat_pct").single();
+      }).select("id, display_name, calorie_goal, protein_pct, carbs_pct, fat_pct, theme, weight_objective").single();
       if (created.error) throw created.error;
       data = created.data;
     }
@@ -2098,7 +2092,17 @@
       protein_pct: Number(data.protein_pct),
       carbs_pct: Number(data.carbs_pct),
       fat_pct: Number(data.fat_pct),
+      theme: data.theme || state.theme || "light",
+      weight_objective: data.weight_objective || state.weight.objective || "lose",
     };
+    if (data.theme) {
+      setTheme(data.theme, true);
+    } else if (state.theme) {
+      client.from("profiles").update({ theme: state.theme }).eq("id", uid).then(() => {}).catch(() => {});
+    }
+    if (data.weight_objective) {
+      state.weight.objective = data.weight_objective;
+    }
     const onDevice = deviceGoals();
     const stillDefault = state.profile.calorie_goal === DEFAULT_GOALS.calories
       && state.profile.protein_pct === DEFAULT_GOALS.protein
@@ -2270,21 +2274,7 @@
       signOut();
       return;
     }
-    if (action === "weight-view-mode") {
-      saveWeightSettings({ viewMode: button.dataset.mode });
-      render();
-      return;
-    }
-    if (action === "set-weight-objective") {
-      saveWeightSettings({ objective: button.dataset.objective });
-      render();
-      return;
-    }
-    if (action === "set-weight-compare") {
-      saveWeightSettings({ compareBy: button.dataset.compare });
-      render();
-      return;
-    }
+
     if (action === "view-nutrient") {
       state.nutrientModal = button.dataset.key;
       render();
@@ -2387,10 +2377,7 @@
       saveWeightSettings({ objective: target.value });
       return;
     }
-    if (target.name === "weight_compare_by") {
-      saveWeightSettings({ compareBy: target.value });
-      return;
-    }
+
     if (target.dataset?.action === "meal-type") {
       saveMealType(target);
       return;
