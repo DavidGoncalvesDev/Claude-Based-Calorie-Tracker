@@ -57,8 +57,25 @@
     moon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3.5A8 8 0 1 0 20.5 14 6.5 6.5 0 0 1 15 3.5Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>',
     left: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5.5 8 12l6.5 6.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     right: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 5.5 16 12l-6.5 6.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    close: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
   };
 
+  const WEIGHT_SETTINGS_KEY = "calorie-tracker-weight-settings";
+
+  function loadWeightSettings() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(WEIGHT_SETTINGS_KEY) || "null");
+      return {
+        viewMode: saved?.viewMode || "daily",
+        compareBy: saved?.compareBy || "month_avg",
+        objective: saved?.objective || "lose",
+      };
+    } catch {
+      return { viewMode: "daily", compareBy: "month_avg", objective: "lose" };
+    }
+  }
+
+  const initialWeightSettings = loadWeightSettings();
   const root = document.getElementById("app");
   const savedTheme = localStorage.getItem(THEME_KEY);
   const state = {
@@ -91,7 +108,11 @@
       loading: false,
       error: "",
       loaded: false,
+      viewMode: initialWeightSettings.viewMode,
+      compareBy: initialWeightSettings.compareBy,
+      objective: initialWeightSettings.objective,
     },
+    nutrientModal: null,
   };
 
   let client = null;
@@ -146,6 +167,21 @@
   function recentStorageKey() {
     const id = userId();
     return id ? `${RECENT_KEY}:${id}` : RECENT_KEY;
+  }
+
+  function saveWeightSettings(updates) {
+    const current = {
+      viewMode: state.weight.viewMode,
+      compareBy: state.weight.compareBy,
+      objective: state.weight.objective,
+      ...updates,
+    };
+    state.weight.viewMode = current.viewMode;
+    state.weight.compareBy = current.compareBy;
+    state.weight.objective = current.objective;
+    try {
+      localStorage.setItem(WEIGHT_SETTINGS_KEY, JSON.stringify(current));
+    } catch {}
   }
 
   function num(value) {
@@ -630,32 +666,229 @@
     };
   }
 
+  function weeklyWeightAverages(entries) {
+    if (!entries || !entries.length) return [];
+    const ordered = [...entries].sort((a, b) => String(a.weighed_on).localeCompare(String(b.weighed_on)));
+    const map = new Map();
+    for (const entry of ordered) {
+      const mon = weekStart(entry.weighed_on);
+      if (!map.has(mon)) map.set(mon, []);
+      map.get(mon).push(entry.weight_kg);
+    }
+    const weeks = [...map.keys()].sort();
+    return weeks.map((start, idx) => {
+      const list = map.get(start);
+      const avg = list.reduce((a, b) => a + b, 0) / list.length;
+      const end = addDays(start, 6);
+      const roundedAvg = Math.round(avg * 100) / 100;
+      const prevWeekAvg = idx > 0 ? (map.get(weeks[idx - 1]).reduce((a, b) => a + b, 0) / map.get(weeks[idx - 1]).length) : null;
+      const diff = prevWeekAvg != null ? Math.round((roundedAvg - prevWeekAvg) * 100) / 100 : null;
+      return {
+        start,
+        end,
+        avg: roundedAvg,
+        count: list.length,
+        label: `${formatShort(start)} – ${formatShort(end)}`,
+        diff,
+      };
+    });
+  }
+
+  function monthlyWeightData(entries, compareBy = "month_avg", objective = "lose") {
+    if (!entries || !entries.length) return [];
+    const ordered = [...entries].sort((a, b) => String(a.weighed_on).localeCompare(String(b.weighed_on)));
+    const map = new Map();
+    for (const entry of ordered) {
+      const monthKey = entry.weighed_on.slice(0, 7);
+      if (!map.has(monthKey)) map.set(monthKey, []);
+      map.get(monthKey).push(entry);
+    }
+    const months = [...map.keys()].sort();
+    const results = [];
+    for (let i = 0; i < months.length; i++) {
+      const mKey = months[i];
+      const mEntries = map.get(mKey);
+      const monthAvg = mEntries.reduce((s, e) => s + e.weight_kg, 0) / mEntries.length;
+
+      const lastDay = monthEnd(mKey + "-01");
+      const lastWeekCutoff = addDays(lastDay, -6);
+      const lastWeekEntries = mEntries.filter((e) => e.weighed_on >= lastWeekCutoff);
+      const lastWeekAvg = lastWeekEntries.length
+        ? lastWeekEntries.reduce((s, e) => s + e.weight_kg, 0) / lastWeekEntries.length
+        : monthAvg;
+
+      const repWeight = compareBy === "last_week" ? lastWeekAvg : monthAvg;
+      const roundedRep = Math.round(repWeight * 100) / 100;
+
+      const prev = results[i - 1];
+      const diff = prev ? Math.round((roundedRep - prev.repWeight) * 100) / 100 : 0;
+
+      const [y, m] = mKey.split("-").map(Number);
+      const date = new Date(Date.UTC(y, m - 1, 1));
+      const monthLabel = date.toLocaleDateString("en-GB", { month: "short", year: "numeric", timeZone: "UTC" });
+
+      results.push({
+        monthKey: mKey,
+        monthLabel,
+        entriesCount: mEntries.length,
+        monthAvg: Math.round(monthAvg * 100) / 100,
+        lastWeekAvg: Math.round(lastWeekAvg * 100) / 100,
+        repWeight: roundedRep,
+        diff: i === 0 ? 0 : diff,
+        hasPrevious: i > 0,
+      });
+    }
+    return results;
+  }
+
+  function weightDiffColor(diff, objective, hasPrev) {
+    if (!hasPrev || Math.abs(diff) < 0.05) return "rgba(140, 140, 140, 0.6)";
+    const up = diff > 0;
+    if (objective === "gain") {
+      return up ? "#10b981" : "#ef4444";
+    }
+    if (objective === "maintain") {
+      return Math.abs(diff) <= 0.4 ? "#10b981" : "#ef4444";
+    }
+    return up ? "#ef4444" : "#10b981";
+  }
+
+  function weightDiffBadge(diff, objective, hasPrev) {
+    if (!hasPrev) return '<span class="delta-pill neutral">Baseline</span>';
+    if (Math.abs(diff) < 0.05) return '<span class="delta-pill neutral">0.0 kg</span>';
+    const up = diff > 0;
+    let tone = "neutral";
+    if (objective === "gain") tone = up ? "good" : "bad";
+    else if (objective === "maintain") tone = Math.abs(diff) <= 0.4 ? "good" : "bad";
+    else tone = up ? "bad" : "good";
+    return `<span class="delta-pill ${tone}">${esc(signedKg(diff))}</span>`;
+  }
+
   function mountWeightChart() {
     if (state.weight.loading || state.weight.error || !window.Chart) return;
-    const canvas = document.getElementById("chart-weight");
     const entries = [...state.weight.entries].sort((a, b) => String(a.weighed_on).localeCompare(String(b.weighed_on)));
-    if (!canvas || !entries.length) return;
-    const color = cssVar("--kcal", "#f25c2c");
-    const options = chartOptions(false, false);
-    options.plugins.legend.display = false;
-    options.plugins.tooltip.callbacks.label = (ctx) => `${fmtAmount(ctx.parsed.y)} kg`;
-    charts.push(new window.Chart(canvas, {
-      type: "line",
-      data: {
-        labels: entries.map((entry) => formatChartLabel(entry.weighed_on)),
-        datasets: [{
-          label: "Weight",
-          data: entries.map((entry) => entry.weight_kg),
-          borderColor: color,
-          backgroundColor: "rgba(242, 92, 44, 0.18)",
-          pointBackgroundColor: color,
-          tension: 0.25,
-          pointRadius: entries.length > 40 ? 0 : 4,
-          fill: true,
-        }],
-      },
-      options,
-    }));
+    if (!entries.length) return;
+
+    const dailyCanvas = document.getElementById("chart-weight-daily");
+    const weeklyCanvas = document.getElementById("chart-weight-weekly");
+    const monthlyCanvas = document.getElementById("chart-weight-monthly");
+
+    // 1. Daily Weight Line Chart
+    if (dailyCanvas) {
+      const color = cssVar("--kcal", "#f25c2c");
+      const options = chartOptions(false, false);
+      options.plugins.legend.display = false;
+      options.plugins.tooltip.callbacks.label = (ctx) => `${fmtAmount(ctx.parsed.y)} kg`;
+      charts.push(new window.Chart(dailyCanvas, {
+        type: "line",
+        data: {
+          labels: entries.map((entry) => formatChartLabel(entry.weighed_on)),
+          datasets: [{
+            label: "Daily Weight",
+            data: entries.map((entry) => entry.weight_kg),
+            borderColor: color,
+            backgroundColor: "rgba(242, 92, 44, 0.18)",
+            pointBackgroundColor: color,
+            tension: 0.25,
+            pointRadius: entries.length > 40 ? 0 : 4,
+            fill: true,
+          }],
+        },
+        options,
+      }));
+    }
+
+    // 2. Weekly Average Line Chart
+    if (weeklyCanvas) {
+      const weeks = weeklyWeightAverages(entries);
+      if (weeks.length) {
+        const color = cssVar("--accent", "#0f766e");
+        const options = chartOptions(false, false);
+        options.plugins.legend.display = false;
+        options.plugins.tooltip.callbacks.label = (ctx) => {
+          const w = weeks[ctx.dataIndex];
+          return `${fmtAmount(ctx.parsed.y)} kg · avg of ${w.count} weigh-in${w.count === 1 ? "" : "s"}`;
+        };
+        charts.push(new window.Chart(weeklyCanvas, {
+          type: "line",
+          data: {
+            labels: weeks.map((w) => w.label),
+            datasets: [{
+              label: "Weekly Average",
+              data: weeks.map((w) => w.avg),
+              borderColor: color,
+              backgroundColor: "rgba(15, 118, 110, 0.18)",
+              pointBackgroundColor: color,
+              pointRadius: weeks.length > 25 ? 2 : 5,
+              pointHoverRadius: 7,
+              tension: 0.25,
+              fill: true,
+            }],
+          },
+          options,
+        }));
+      }
+    }
+
+    // 3. Monthly Change Bar Chart
+    if (monthlyCanvas) {
+      const monthly = monthlyWeightData(entries, state.weight.compareBy, state.weight.objective);
+      if (monthly.length) {
+        const text = cssVar("--muted", "#57534e");
+        const grid = cssVar("--line", "#e6dfd2");
+        const bgColors = monthly.map((m) => weightDiffColor(m.diff, state.weight.objective, m.hasPrevious));
+
+        charts.push(new window.Chart(monthlyCanvas, {
+          type: "bar",
+          data: {
+            labels: monthly.map((m) => m.monthLabel),
+            datasets: [{
+              label: "Monthly Weight Change (kg)",
+              data: monthly.map((m) => m.diff),
+              backgroundColor: bgColors,
+              borderRadius: 6,
+              maxBarThickness: 42,
+            }],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: matchMedia("(prefers-reduced-motion: reduce)").matches ? false : { duration: 350 },
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                callbacks: {
+                  title: (items) => {
+                    const m = monthly[items[0].dataIndex];
+                    return m.monthLabel;
+                  },
+                  label: (ctx) => {
+                    const m = monthly[ctx.dataIndex];
+                    if (!m.hasPrevious) return `Baseline month: ${fmtAmount(m.repWeight)} kg (${m.entriesCount} weigh-ins)`;
+                    return `${signedKg(m.diff)} vs previous month · Current avg: ${fmtAmount(m.repWeight)} kg`;
+                  },
+                },
+              },
+            },
+            scales: {
+              x: { grid: { display: false }, ticks: { color: text } },
+              y: {
+                beginAtZero: true,
+                grace: "15%",
+                ticks: {
+                  color: text,
+                  callback: (val) => signedKg(val),
+                },
+                grid: {
+                  color: (ctx) => (ctx.tick.value === 0 ? text : grid),
+                  lineWidth: (ctx) => (ctx.tick.value === 0 ? 1.5 : 1),
+                },
+              },
+            },
+          },
+        }));
+      }
+    }
   }
 
   function mountCharts() {
@@ -711,13 +944,14 @@
     return "low";
   }
 
-  function barHtml(key) {
+  function barHtml(key, customItems) {
+    const items = Array.isArray(customItems) ? customItems : state.items;
     const meta = targetByKey(key);
-    const value = sumItems(state.items, key);
+    const value = sumItems(items, key);
     const percent = meta.target ? (value / meta.target) * 100 : 0;
     const width = Math.max(0, Math.min(percent, 100));
-    return `<div class="nutrient">
-      <div class="nutrient-label"><span>${DOT[key] ? `<i class="swatch ${DOT[key]}" aria-hidden="true"></i> ` : ""}${esc(meta.label)}</span><span class="num">${esc(fmtAmount(value))} / ${esc(key === "calories" ? fmtInt(meta.target) : fmtAmount(meta.target))} ${esc(meta.unit)}</span></div>
+    return `<div class="nutrient clickable" data-action="view-nutrient" data-key="${esc(key)}" role="button" tabindex="0" title="Click to see food sources">
+      <div class="nutrient-label"><span>${DOT[key] ? `<i class="swatch ${DOT[key]}" aria-hidden="true"></i> ` : ""}${esc(meta.label)} <svg class="chevron-inline" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path d="M9 18l6-6-6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span><span class="num">${esc(fmtAmount(value))} / ${esc(key === "calories" ? fmtInt(meta.target) : fmtAmount(meta.target))} ${esc(meta.unit)}</span></div>
       <div class="track" role="meter" aria-label="${esc(meta.label)}" aria-valuemin="0" aria-valuemax="${meta.target}" aria-valuenow="${Math.round(value)}"><span class="${DOT[key] || toneFor(percent, meta.type)}" style="width:${width}%"></span></div>
     </div>`;
   }
@@ -830,7 +1064,7 @@
       : `<section class="card empty"><h2>Nothing logged yet</h2><p>Add a meal here, or send a food photo to Claude.</p><button type="button" class="primary" data-action="nav" data-view="add">Add food</button></section>`;
     return `${head}
       <div class="day-top">
-        <section class="card ring-card">${ringHtml(sumItems(state.items, "calories"))}</section>
+        <section class="card ring-card clickable" data-action="view-nutrient" data-key="calories" role="button" tabindex="0" title="Click to see calorie sources">${ringHtml(sumItems(state.items, "calories"))}<span class="ring-hint">Tap to see sources →</span></section>
         <section class="card"><h2>Protein, carbs and fat</h2>${barHtml("protein_g")}${barHtml("carbs_g")}${barHtml("fat_g")}${splitHtml()}</section>
       </div>
       <section class="card"><h2>Fiber and limits</h2>${barHtml("fiber_g")}${barHtml("sugar_g")}${barHtml("saturated_fat_g")}</section>
@@ -964,7 +1198,7 @@
     ].map(([key, label]) => {
       const meta = targetByKey(key);
       const value = key === "calories" ? fmtInt(average(key)) : fmtAmount(average(key));
-      return `<article class="card stat"><span>${label}</span><strong class="num">${esc(value)} ${esc(meta.unit)}</strong></article>`;
+      return `<article class="card stat clickable" data-action="view-nutrient" data-key="${esc(key)}" role="button" tabindex="0" title="Click to see sources for this ${kind}"><span>${label}</span><strong class="num">${esc(value)} ${esc(meta.unit)}</strong></article>`;
     }).join("");
     const rows = [...used].reverse().map(([day, items]) => `<tr class="${day === todayKey() ? "today" : ""}">
       <td>${esc(formatTableDate(day))}</td>
@@ -1003,11 +1237,25 @@
     const latest = ordered[ordered.length - 1];
     const previous = ordered.length > 1 ? ordered[ordered.length - 2] : null;
     const first = ordered[0];
+
+    const compareBy = state.weight.compareBy || "month_avg";
+    const objective = state.weight.objective || "lose";
+
+    const weeklyAverages = weeklyWeightAverages(ordered);
+    const latestWeek = weeklyAverages[weeklyAverages.length - 1];
+    const prevWeek = weeklyAverages.length > 1 ? weeklyAverages[weeklyAverages.length - 2] : null;
+
+    const monthlyData = monthlyWeightData(ordered, compareBy, objective);
+    const latestMonth = monthlyData[monthlyData.length - 1];
+    const prevMonth = monthlyData.length > 1 ? monthlyData[monthlyData.length - 2] : null;
+
     const stats = latest ? `<section class="stats">
-      <article class="card stat"><span>Latest</span><strong class="num">${esc(fmtAmount(latest.weight_kg))} kg</strong><span>${esc(formatTableDate(latest.weighed_on))}</span></article>
+      <article class="card stat"><span>Latest weight</span><strong class="num">${esc(fmtAmount(latest.weight_kg))} kg</strong><span>${esc(formatTableDate(latest.weighed_on))}</span></article>
       ${previous ? `<article class="card stat"><span>Since last</span><strong class="num">${esc(signedKg(latest.weight_kg - previous.weight_kg))}</strong><span>${esc(formatShort(previous.weighed_on))}</span></article>` : ""}
-      ${first && first !== latest ? `<article class="card stat"><span>Since first</span><strong class="num">${esc(signedKg(latest.weight_kg - first.weight_kg))}</strong><span>${esc(formatShort(first.weighed_on))}</span></article>` : ""}
+      ${latestWeek ? `<article class="card stat"><span>Weekly avg</span><strong class="num">${esc(fmtAmount(latestWeek.avg))} kg</strong><span>${latestWeek.diff != null ? weightDiffBadge(latestWeek.diff, objective, true) : esc(latestWeek.label)}</span></article>` : ""}
+      ${latestMonth && latestMonth.hasPrevious ? `<article class="card stat"><span>Monthly change</span><strong class="num">${weightDiffBadge(latestMonth.diff, objective, true)}</strong><span>vs ${prevMonth ? esc(prevMonth.monthLabel) : "prior month"}</span></article>` : (first && first !== latest ? `<article class="card stat"><span>Since first</span><strong class="num">${esc(signedKg(latest.weight_kg - first.weight_kg))}</strong><span>${esc(formatShort(first.weighed_on))}</span></article>` : "")}
     </section>` : "";
+
     const form = `<form class="card stack" data-form="weight" autocomplete="off">
       <h2>Log weight</h2>
       <div class="pair">
@@ -1018,13 +1266,56 @@
       <p class="form-error" role="alert"></p>
       <button type="submit" class="primary">Save weight</button>
     </form>`;
+
     if (state.weight.loading && !state.weight.loaded) return `<h1>Weight</h1>${form}<p class="hint">Loading weight…</p>`;
     if (state.weight.error && !entries.length) return `<h1>Weight</h1>${form}<p class="error" role="alert">${esc(state.weight.error)}</p><button type="button" class="secondary" data-action="reload-weight">Try again</button>`;
-    const chart = entries.length
-      ? (window.Chart
-        ? `<section class="card chart-card"><h2>How it has changed</h2><div class="chart-box"><canvas id="chart-weight"></canvas></div></section>`
-        : `<p class="error">Could not load the chart. Check your connection and refresh.</p>`)
-      : `<section class="card empty"><h2>No weight yet</h2><p>Log a weight and the line will show up here.</p></section>`;
+
+    let chartsBlock = "";
+    if (!entries.length) {
+      chartsBlock = `<section class="card empty"><h2>No weight yet</h2><p>Log a weight and the graphs will show up here.</p></section>`;
+    } else if (!window.Chart) {
+      chartsBlock = `<p class="error">Could not load the charts. Check your connection and refresh.</p>`;
+    } else {
+      chartsBlock = `<div class="weight-charts-grid">
+        <section class="card chart-card full-span">
+          <h2>Daily weight</h2>
+          <div class="chart-box"><canvas id="chart-weight-daily"></canvas></div>
+          <p class="hint">Line graph connecting each daily weigh-in.</p>
+        </section>
+
+        <section class="card chart-card">
+          <h2>Weekly average</h2>
+          <div class="chart-box"><canvas id="chart-weight-weekly"></canvas></div>
+          <p class="hint">Graph of average weights by calendar week.</p>
+        </section>
+
+        <section class="card chart-card">
+          <div class="weight-card-header">
+            <h2>Monthly change</h2>
+          </div>
+          <div class="weight-controls-row">
+            <div class="control-group">
+              <span class="control-label">Objective:</span>
+              <div class="chips-mini">
+                <button type="button" class="chip-sm" data-action="set-weight-objective" data-objective="lose" aria-pressed="${objective === 'lose'}">Lose weight</button>
+                <button type="button" class="chip-sm" data-action="set-weight-objective" data-objective="maintain" aria-pressed="${objective === 'maintain'}">Maintain</button>
+                <button type="button" class="chip-sm" data-action="set-weight-objective" data-objective="gain" aria-pressed="${objective === 'gain'}">Gain weight</button>
+              </div>
+            </div>
+            <div class="control-group">
+              <span class="control-label">Month weight:</span>
+              <div class="chips-mini">
+                <button type="button" class="chip-sm" data-action="set-weight-compare" data-compare="month_avg" aria-pressed="${compareBy === 'month_avg'}">Full month avg</button>
+                <button type="button" class="chip-sm" data-action="set-weight-compare" data-compare="last_week" aria-pressed="${compareBy === 'last_week'}">Last week avg</button>
+              </div>
+            </div>
+          </div>
+          <div class="chart-box"><canvas id="chart-weight-monthly"></canvas></div>
+          <p class="hint">Bars go up if weight went up, down if it went down. Colors follow your objective.</p>
+        </section>
+      </div>`;
+    }
+
     const rows = entries.map((entry) => `<div class="weight-row">
       <span>${esc(formatTableDate(entry.weighed_on))}</span>
       <strong class="num">${esc(fmtAmount(entry.weight_kg))} kg</strong>
@@ -1032,7 +1323,8 @@
     </div>`).join("");
     const list = entries.length ? `<section class="card"><h2>Log</h2><div class="weight-list">${rows}</div></section>` : "";
     const error = state.weight.error ? `<p class="error" role="alert">${esc(state.weight.error)}</p>` : "";
-    return `<h1>Weight</h1>${error}${form}${stats}${chart}${list}`;
+
+    return `<h1>Weight</h1>${error}${form}${stats}${chartsBlock}${list}`;
   }
 
   async function loadWeight() {
@@ -1145,6 +1437,25 @@
         <button class="primary" type="submit">Save goals</button>
       </section>
       <section class="card stack">
+        <h2>Weight tracking</h2>
+        <label class="field">
+          <span>Weight objective</span>
+          <select name="weight_objective">
+            <option value="lose"${state.weight.objective === "lose" ? " selected" : ""}>Lose weight (Cut) — Drops are green, gains are red</option>
+            <option value="maintain"${state.weight.objective === "maintain" ? " selected" : ""}>Maintain weight — Steady is green, changes are red</option>
+            <option value="gain"${state.weight.objective === "gain" ? " selected" : ""}>Gain weight (Bulk) — Gains are green, drops are red</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Monthly comparison basis</span>
+          <select name="weight_compare_by">
+            <option value="month_avg"${state.weight.compareBy === "month_avg" ? " selected" : ""}>Full month average (Smoothest, less daily noise)</option>
+            <option value="last_week"${state.weight.compareBy === "last_week" ? " selected" : ""}>Average of last week of month (Exit weight)</option>
+          </select>
+        </label>
+        <p class="hint">Controls the bar direction and colors on the monthly weight comparison chart.</p>
+      </section>
+      <section class="card stack">
         <h2>Colours</h2>
         <div class="themes" role="group" aria-label="Colours">${choices}</div>
       </section>
@@ -1152,6 +1463,73 @@
         <p class="hint">Days follow the clock in Lisbon. Photos stay in your Claude chat. This site shows the meals that chat saved for your username.</p>
       </section>
     </form>`;
+  }
+
+  function nutrientModalHtml() {
+    if (!state.nutrientModal) return "";
+    const key = state.nutrientModal;
+    const meta = targetByKey(key);
+    const isPeriod = (state.view === "week" || state.view === "month");
+    const sourceItems = isPeriod ? (state.period.items || []) : (state.items || []);
+
+    const list = [];
+    for (const item of sourceItems) {
+      const val = valueOf(item, key);
+      if (val > 0) {
+        list.push({
+          id: item.id,
+          name: item.item_name || "Food",
+          meal: item.meal_name || "Meal",
+          portion: item.portion || "",
+          eatenAt: item.eaten_at,
+          val,
+        });
+      }
+    }
+
+    list.sort((a, b) => b.val - a.val);
+    const total = list.reduce((s, x) => s + x.val, 0);
+    const target = meta.target;
+    const pctOfGoal = target ? Math.round((total / target) * 100) : null;
+    const timeLabel = isPeriod ? (state.view === "week" ? "This week" : "This month") : (state.dateKey === todayKey() ? "Today" : formatTableDate(state.dateKey));
+
+    const content = !list.length
+      ? `<div class="empty-sources-box"><p class="hint">No logged foods provided ${esc(meta.label.toLowerCase())} ${timeLabel.toLowerCase()}.</p></div>`
+      : `<div class="sources-list">${list.map((c, idx) => {
+          const pct = total > 0 ? Math.round((c.val / total) * 100) : 0;
+          const barWidth = Math.max(2, Math.min(pct, 100));
+          const dateSub = isPeriod ? ` · ${esc(formatShort(dateKeyFromInstant(parseTime(c.eatenAt))))}` : "";
+          return `<div class="source-item">
+            <div class="source-item-head">
+              <span class="source-rank">#${idx + 1}</span>
+              <div class="source-details">
+                <strong class="source-food-name">${esc(c.name)}</strong>
+                <span class="source-meal-portion">${esc(c.meal)}${c.portion ? ` · ${esc(c.portion)}` : ""}${dateSub}</span>
+              </div>
+              <div class="source-amount">
+                <strong class="num">${esc(key === 'calories' ? fmtInt(c.val) : fmtAmount(c.val))} ${esc(meta.unit)}</strong>
+                <span class="source-pct">${pct}% of total</span>
+              </div>
+            </div>
+            <div class="track" style="height: 5px; margin-top: 6px;"><span class="${DOT[key] || 'good'}" style="width: ${barWidth}%;"></span></div>
+          </div>`;
+        }).join("")}</div>`;
+
+    return `<div class="modal-back" data-action="close-nutrient-modal">
+      <div class="modal-card nutrient-modal" role="dialog" aria-modal="true" aria-labelledby="nutrient-modal-title" data-action="stop">
+        <div class="nutrient-modal-header">
+          <div>
+            <h2 id="nutrient-modal-title">${esc(meta.label)} sources</h2>
+            <p class="hint">${esc(timeLabel)}: <strong class="num">${esc(key === 'calories' ? fmtInt(total) : fmtAmount(total))} ${esc(meta.unit)}</strong>${target ? ` · ${pctOfGoal}% of ${esc(key === 'calories' ? fmtInt(target) : fmtAmount(target))} ${esc(meta.unit)} goal` : ""}</p>
+          </div>
+          <button type="button" class="icon-btn" data-action="close-nutrient-modal" aria-label="Close">${ICONS.close}</button>
+        </div>
+        ${content}
+        <div class="nutrient-modal-footer">
+          <button type="button" class="primary" data-action="close-nutrient-modal">Done</button>
+        </div>
+      </div>
+    </div>`;
   }
 
   function confirmHtml() {
@@ -1174,7 +1552,8 @@
   }
 
   function shell(content) {
-    return `<div class="app-shell"${state.confirm ? " inert" : ""}>
+    const isModalOpen = Boolean(state.confirm || state.nutrientModal);
+    return `<div class="app-shell"${isModalOpen ? " inert" : ""}>
       <header class="top"><div class="top-inner">
         <button type="button" class="brand" data-action="nav" data-view="day"><img class="logo" src="icons/Logo.png" alt="" width="40" height="40"><span class="brand-name">${esc(firstName())}</span></button>
         <nav class="tabbar" aria-label="Main">${tab("day", "Day", ICONS.day)}${tab("week", "Week", ICONS.week)}${tab("month", "Month", ICONS.month)}${tab("weight", "Weight", ICONS.weight)}</nav>
@@ -1185,6 +1564,7 @@
       </div></header>
       <main>${content}</main>
     </div>
+    ${nutrientModalHtml()}
     ${confirmHtml()}
     ${state.toast ? `<div class="toast" role="status">${esc(state.toast)}</div>` : ""}`;
   }
@@ -1642,6 +2022,14 @@
       fat_pct: parsed.goal.fat,
     }).eq("id", uid);
     if (error) return failForm(form, button, "Save goals", "Could not save your goals. Check your connection and try again.");
+    const wObj = form.querySelector('[name="weight_objective"]')?.value;
+    const wCmp = form.querySelector('[name="weight_compare_by"]')?.value;
+    if (wObj || wCmp) {
+      saveWeightSettings({
+        ...(wObj ? { objective: wObj } : {}),
+        ...(wCmp ? { compareBy: wCmp } : {}),
+      });
+    }
     state.profile = {
       ...state.profile,
       calorie_goal: Math.round(parsed.goal.calories),
@@ -1882,6 +2270,31 @@
       signOut();
       return;
     }
+    if (action === "weight-view-mode") {
+      saveWeightSettings({ viewMode: button.dataset.mode });
+      render();
+      return;
+    }
+    if (action === "set-weight-objective") {
+      saveWeightSettings({ objective: button.dataset.objective });
+      render();
+      return;
+    }
+    if (action === "set-weight-compare") {
+      saveWeightSettings({ compareBy: button.dataset.compare });
+      render();
+      return;
+    }
+    if (action === "view-nutrient") {
+      state.nutrientModal = button.dataset.key;
+      render();
+      return;
+    }
+    if (action === "close-nutrient-modal") {
+      state.nutrientModal = null;
+      render();
+      return;
+    }
     if (action === "nav") navigate(button.dataset.view);
     else if (action === "prev-day") {
       state.dateKey = addDays(state.dateKey, -1);
@@ -1970,6 +2383,14 @@
 
   function onChange(event) {
     const target = event.target;
+    if (target.name === "weight_objective") {
+      saveWeightSettings({ objective: target.value });
+      return;
+    }
+    if (target.name === "weight_compare_by") {
+      saveWeightSettings({ compareBy: target.value });
+      return;
+    }
     if (target.dataset?.action === "meal-type") {
       saveMealType(target);
       return;
@@ -2011,7 +2432,14 @@
     if (event.target.form?.dataset.form === "goals") updateGoalPreview(event.target.form);
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && state.confirm) closeConfirm();
+    if (event.key === "Escape") {
+      if (state.nutrientModal) {
+        state.nutrientModal = null;
+        render();
+        return;
+      }
+      if (state.confirm) closeConfirm();
+    }
   });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState !== "visible" || state.booting || !state.session || state.confirm || state.saving) return;

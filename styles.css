@@ -537,3 +537,253 @@ tr.today { background: var(--today); }
     transition: none !important;
   }
 }
+
+
+/* Clickable nutrients & sources modal */
+.nutrient.clickable {
+  cursor: pointer;
+  padding: 6px 8px;
+  margin: 2px -8px;
+  border-radius: 10px;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+.nutrient.clickable:hover,
+.nutrient.clickable:focus-visible {
+  background: var(--accent-soft);
+  outline: none;
+}
+.chevron-inline {
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 4px;
+  opacity: 0.5;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+.nutrient.clickable:hover .chevron-inline {
+  opacity: 1;
+  transform: translateX(2px);
+}
+.ring-card.clickable {
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.ring-card.clickable:hover {
+  transform: translateY(-2px);
+}
+.ring-hint {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--accent);
+  font-weight: 700;
+  margin-top: 4px;
+  text-align: center;
+}
+.stat.clickable {
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.stat.clickable:hover {
+  background: var(--accent-soft);
+}
+
+/* Nutrient Breakdown Modal */
+.nutrient-modal {
+  width: min(520px, 100%);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 20px;
+  gap: 14px;
+}
+.nutrient-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 12px;
+}
+.nutrient-modal-header h2 {
+  margin: 0 0 4px 0;
+  font-size: 1.25rem;
+}
+.sources-list {
+  overflow-y: auto;
+  max-height: 55vh;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 4px;
+  -webkit-overflow-scrolling: touch;
+}
+.source-item {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.source-item-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+}
+.source-rank {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 800;
+  font-size: 0.75rem;
+  flex: none;
+}
+.source-details {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.source-food-name {
+  font-size: 0.95rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.source-meal-portion {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.source-amount {
+  text-align: right;
+  display: grid;
+  gap: 2px;
+  flex: none;
+}
+.source-pct {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-weight: 700;
+}
+.empty-sources-box {
+  padding: 24px 12px;
+  text-align: center;
+}
+.nutrient-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+/* Weight Mode & Comparisons */
+.weight-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.weight-card-header h2 {
+  margin: 0;
+}
+.weight-mode-segment {
+  display: inline-flex;
+  gap: 2px;
+}
+.weight-mode-segment button {
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  min-height: 34px;
+}
+.weight-controls-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  margin-bottom: 12px;
+}
+.control-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.control-label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+.chips-mini {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.chip-sm {
+  padding: 4px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.chip-sm:hover {
+  border-color: var(--accent);
+}
+.chip-sm[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+}
+
+/* Delta Badges */
+.delta-pill {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-weight: 800;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+.delta-pill.good {
+  background: rgba(16, 185, 129, 0.18);
+  color: #10b981;
+}
+.delta-pill.bad {
+  background: rgba(239, 68, 68, 0.18);
+  color: #ef4444;
+}
+.delta-pill.neutral {
+  background: var(--line);
+  color: var(--muted);
+}
+
+
+/* Weight Charts Responsive Grid */
+.weight-charts-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+@media (min-width: 840px) {
+  .weight-charts-grid {
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+  }
+  .weight-charts-grid .full-span {
+    grid-column: 1 / -1;
+  }
+}
