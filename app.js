@@ -58,7 +58,46 @@
     left: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 5.5 8 12l6.5 6.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     right: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 5.5 16 12l-6.5 6.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     close: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+    chevronDown: '<svg viewBox="0 0 24 24" aria-hidden="true" width="18" height="18"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    check: '<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16"><path d="m5 13 4 4L19 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   };
+
+  function customSelectHtml({ name, id, value, options, className = "", dataAction, dataGroup }) {
+    const selected = options.find((o) => o.value === value) || options[0] || { value: "", label: "" };
+    return `<div class="custom-select ${className}" ${id ? `id="${esc(id)}"` : ""} data-custom-select ${dataGroup ? `data-group="${esc(dataGroup)}"` : ""}>
+      <input type="hidden" name="${esc(name || "")}" value="${esc(selected.value)}"${dataAction ? ` data-action="${esc(dataAction)}"` : ""}${dataGroup ? ` data-group="${esc(dataGroup)}"` : ""}>
+      <button type="button" class="custom-select-trigger" aria-haspopup="listbox" aria-expanded="false">
+        <span class="custom-select-label">${esc(selected.label)}</span>
+        <span class="custom-select-arrow">${ICONS.chevronDown}</span>
+      </button>
+      <div class="custom-select-menu" role="listbox">
+        ${options.map((opt) => `
+          <button type="button" class="custom-select-option${opt.value === selected.value ? " selected" : ""}" role="option" data-value="${esc(opt.value)}" aria-selected="${opt.value === selected.value}">
+            <span>${esc(opt.label)}</span>
+            <span class="custom-select-check">${opt.value === selected.value ? ICONS.check : ""}</span>
+          </button>
+        `).join("")}
+      </div>
+    </div>`;
+  }
+
+  function updateCustomSelectDisplay(hiddenInput) {
+    const container = hiddenInput?.closest(".custom-select");
+    if (!container) return;
+    const val = hiddenInput.value;
+    const opt = container.querySelector(`.custom-select-option[data-value="${CSS.escape ? CSS.escape(val) : val}"]`);
+    const labelEl = container.querySelector(".custom-select-label");
+    if (opt && labelEl) {
+      labelEl.textContent = opt.querySelector("span")?.textContent || val;
+      container.querySelectorAll(".custom-select-option").forEach((o) => {
+        const isSel = o === opt;
+        o.classList.toggle("selected", isSel);
+        o.setAttribute("aria-selected", String(isSel));
+        const check = o.querySelector(".custom-select-check");
+        if (check) check.innerHTML = isSel ? ICONS.check : "";
+      });
+    }
+  }
 
   const WEIGHT_SETTINGS_KEY = "calorie-tracker-weight-settings";
 
@@ -1062,7 +1101,14 @@
     return `<article class="card meal">
       <div class="meal-head">
         <label class="sr-only" for="meal-${esc(meal.meal_group_id)}">Meal type</label>
-        <select id="meal-${esc(meal.meal_group_id)}" class="meal-type" data-action="meal-type" data-group="${esc(meal.meal_group_id)}">${mealOptions(meal.meal_name)}</select>
+        ${customSelectHtml({
+        className: "meal-type-select",
+        id: `meal-${meal.meal_group_id}`,
+        dataAction: "meal-type",
+        dataGroup: meal.meal_group_id,
+        value: meal.meal_name,
+        options: (MEAL_TYPES.includes(meal.meal_name) || !meal.meal_name ? MEAL_TYPES : [meal.meal_name, ...MEAL_TYPES]).map((t) => ({ value: t, label: t }))
+      })}
         <div class="meal-total">
           <strong class="num">${esc(fmtInt(sumItems(meal.items, "calories")))} kcal</strong>
           <span class="hint">P ${esc(fmtAmount(sumItems(meal.items, "protein_g")))} · C ${esc(fmtAmount(sumItems(meal.items, "carbs_g")))} · F ${esc(fmtAmount(sumItems(meal.items, "fat_g")))}</span>
@@ -1185,7 +1231,11 @@
         </div>
         <div id="new-meal-fields" class="stack">
           <label class="field"><span>Time</span><input type="time" name="eaten_time" value="${esc(time)}"></label>
-          <label class="field"><span>Meal</span><select name="meal_name">${mealOptions(mealTypeForTime(time))}</select></label>
+          <div class="field"><span>Meal</span>${customSelectHtml({
+            name: "meal_name",
+            value: mealTypeForTime(time),
+            options: MEAL_TYPES.map((t) => ({ value: t, label: t }))
+          })}</div>
         </div>
         <div id="existing-meal-fields" class="stack" hidden>
           <label class="field"><span>Meal</span><select id="existing-meal"><option value="">Loading meals…</option></select></label>
@@ -1447,13 +1497,17 @@
       </section>
       <section class="card stack">
         <h2>Weight objective</h2>
-        <label class="field">
+        <div class="field">
           <span>Objective</span>
-          <select name="weight_objective">
-            <option value="lose"${(state.profile?.weight_objective || state.weight.objective) === "lose" ? " selected" : ""}>Lose weight</option>
-            <option value="gain"${(state.profile?.weight_objective || state.weight.objective) === "gain" ? " selected" : ""}>Gain weight</option>
-          </select>
-        </label>
+          ${customSelectHtml({
+            name: "weight_objective",
+            value: (state.profile?.weight_objective || state.weight.objective || "lose"),
+            options: [
+              { value: "lose", label: "Lose weight" },
+              { value: "gain", label: "Gain weight" },
+            ]
+          })}
+        </div>
         <p class="hint">Sets whether weight drops are green (losing weight) or weight gains are green (gaining weight).</p>
       </section>
       <section class="card stack">
@@ -2394,7 +2448,10 @@
     }
     if (target.name === "eaten_time" && target.form?.dataset.form === "add") {
       const meal = target.form.querySelector('[name="meal_name"]');
-      if (meal && meal.dataset.touched !== "1") meal.value = mealTypeForTime(target.value);
+      if (meal && meal.dataset.touched !== "1") {
+        meal.value = mealTypeForTime(target.value);
+        updateCustomSelectDisplay(meal);
+      }
       return;
     }
     if (target.name === "meal_name" && target.form?.dataset.form === "add") {

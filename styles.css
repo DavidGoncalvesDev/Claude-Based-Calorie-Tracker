@@ -787,3 +787,167 @@ tr.today { background: var(--today); }
     grid-column: 1 / -1;
   }
 }
+
+
+/* Custom Select Dropdowns */
+.custom-select {
+  position: relative;
+  width: 100%;
+}
+.custom-select-trigger {
+  width: 100%;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+  user-select: none;
+}
+.custom-select-trigger:hover {
+  border-color: var(--accent);
+}
+.custom-select.open .custom-select-trigger,
+.custom-select-trigger:focus-visible {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.custom-select-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.custom-select-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), color 0.15s ease;
+  margin-left: 10px;
+  flex: none;
+}
+.custom-select.open .custom-select-arrow {
+  transform: rotate(180deg);
+  color: var(--accent);
+}
+.custom-select-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 60;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 6px;
+  box-shadow: 0 12px 28px -4px rgba(0, 0, 0, 0.28), 0 6px 12px -3px rgba(0, 0, 0, 0.15);
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 280px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.custom-select.open .custom-select-menu {
+  display: flex;
+  animation: customSelectPop 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes customSelectPop {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.custom-select-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.95rem;
+  font-weight: 600;
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.custom-select-option:hover,
+.custom-select-option:focus-visible {
+  background: var(--accent-soft);
+  color: var(--text);
+  outline: none;
+}
+.custom-select-option.selected {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 800;
+}
+.custom-select-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: var(--accent);
+  flex: none;
+  margin-left: 8px;
+}
+
+/* Compact meal type select in meal card */
+.custom-select.meal-type-select {
+  display: inline-block;
+  width: auto;
+  max-width: 13rem;
+}
+.custom-select.meal-type-select .custom-select-trigger {
+  min-height: 38px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-weight: 800;
+  font-size: 0.92rem;
+  background: var(--bg);
+}
+.custom-select.meal-type-select .custom-select-menu {
+  min-width: 180px;
+  left: 0;
+  right: auto;
+}
+
+/* Enhanced native select fallback */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23888888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  background-size: 16px 16px;
+  padding-right: 40px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+select:hover {
+  border-color: var(--accent);
+}
+select option {
+  background-color: var(--card);
+  color: var(--text);
+  padding: 10px 14px;
+}
